@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RimeConfig 0.2.0 · 设计总览</title>
+<style>
+  :root{
+    --c-primary:#185FA5;
+    --c-primary-700:#134C84;
+    --c-primary-50:#EAF2FA;
+    --c-ink:#1F2933;
+    --c-ink-2:#52606D;
+    --c-ink-3:#7B8794;
+    --c-line:#E4E7EB;
+    --c-bg:#F5F7FA;
+    --c-card:#FFFFFF;
+    --c-shadow-sm:0 1px 2px rgba(16,24,40,.06);
+    --c-shadow-md:0 6px 16px rgba(16,24,40,.10);
+    --c-shadow-lg:0 16px 40px rgba(16,24,40,.18);
+    --r-sm:8px; --r-md:12px; --r-lg:18px;
+    --s-1:4px; --s-2:8px; --s-3:12px; --s-4:16px; --s-5:24px; --s-6:32px; --s-8:48px;
+    --font:"Segoe UI","Microsoft YaHei",system-ui,-apple-system,"PingFang SC",sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:var(--font);
+    color:var(--c-ink);
+    background:var(--c-bg);
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  /* ---------- Top bar ---------- */
+  .topbar{
+    position:sticky;top:0;z-index:50;
+    background:rgba(255,255,255,.86);
+    backdrop-filter:saturate(180%) blur(12px);
+    border-bottom:1px solid var(--c-line);
+  }
+  .topbar-inner{
+    max-width:1240px;margin:0 auto;
+    display:flex;align-items:center;gap:var(--s-4);
+    padding:var(--s-3) var(--s-5);
+  }
+  .brand{display:flex;align-items:center;gap:var(--s-3);flex-shrink:0}
+  .brand .logo{
+    width:34px;height:34px;border-radius:9px;
+    background:linear-gradient(135deg,var(--c-primary),#2E7FD1);
+    display:grid;place-items:center;color:#fff;font-weight:700;font-size:16px;
+    box-shadow:var(--c-shadow-sm);
+  }
+  .brand .name{font-weight:700;font-size:16px;letter-spacing:.2px}
+  .brand .ver{
+    font-size:11px;color:var(--c-primary);background:var(--c-primary-50);
+    padding:2px 8px;border-radius:99px;font-weight:600;margin-left:2px;
+  }
+  .nav{display:flex;gap:6px;overflow-x:auto;margin-left:auto;scrollbar-width:none}
+  .nav::-webkit-scrollbar{display:none}
+  .nav a{
+    text-decoration:none;color:var(--c-ink-2);font-size:13px;font-weight:500;
+    padding:6px 12px;border-radius:99px;white-space:nowrap;transition:.15s;
+  }
+  .nav a:hover{background:var(--c-primary-50);color:var(--c-primary)}
+
+  /* ---------- Hero ---------- */
+  .hero{max-width:1240px;margin:0 auto;padding:var(--s-8) var(--s-5) var(--s-5)}
+  .hero h1{font-size:30px;font-weight:700;letter-spacing:-.5px}
+  .hero h1 .accent{color:var(--c-primary)}
+  .hero p{color:var(--c-ink-2);max-width:680px;margin-top:var(--s-3);font-size:15px}
+  .hero .meta{
+    display:flex;flex-wrap:wrap;gap:var(--s-2);margin-top:var(--s-5);
+  }
+  .chip{
+    font-size:12px;font-weight:600;color:var(--c-ink-2);
+    background:var(--c-card);border:1px solid var(--c-line);
+    padding:6px 12px;border-radius:99px;box-shadow:var(--c-shadow-sm);
+  }
+  .chip b{color:var(--c-primary)}
+
+  /* ---------- Sections ---------- */
+  .section{max-width:1240px;margin:0 auto;padding:var(--s-6) var(--s-5) var(--s-4)}
+  .section-head{display:flex;align-items:baseline;gap:var(--s-3);margin-bottom:var(--s-5)}
+  .section-head .num{
+    font-size:13px;font-weight:700;color:#fff;background:var(--c-primary);
+    width:26px;height:26px;border-radius:8px;display:grid;place-items:center;flex-shrink:0;
+  }
+  .section-head h2{font-size:21px;font-weight:700;letter-spacing:-.3px}
+  .section-head .sub{color:var(--c-ink-3);font-size:13px;margin-left:auto;text-align:right}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:var(--s-5)}
+  .card{
+    background:var(--c-card);border:1px solid var(--c-line);border-radius:var(--r-md);
+    overflow:hidden;box-shadow:var(--c-shadow-sm);transition:.2s;
+  }
+  .card:hover{box-shadow:var(--c-shadow-md);transform:translateY(-3px);border-color:#cdd6e0}
+  .card .thumb{
+    aspect-ratio:1180/760;background:#eef1f4;
+    display:grid;place-items:center;cursor:zoom-in;overflow:hidden;position:relative;
+  }
+  .card .thumb img{
+    width:100%;height:100%;object-fit:contain;display:block;transition:.25s;
+  }
+  .card .thumb:hover img{transform:scale(1.03)}
+  .card .thumb .zoom{
+    position:absolute;right:10px;bottom:10px;
+    background:rgba(31,41,51,.72);color:#fff;font-size:11px;font-weight:600;
+    padding:5px 10px;border-radius:99px;opacity:0;transition:.2s;pointer-events:none;
+  }
+  .card .thumb:hover .zoom{opacity:1}
+  .card .body{padding:var(--s-4)}
+  .card .body .t{font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px}
+  .card .body .dot{width:9px;height:9px;border-radius:99px;flex-shrink:0}
+  .card .body .d{color:var(--c-ink-2);font-size:13px;margin-top:6px}
+
+  .foot{max-width:1240px;margin:var(--s-6) auto 0;padding:var(--s-5);
+    border-top:1px solid var(--c-line);color:var(--c-ink-3);font-size:12.5px;text-align:center}
+
+  /* ---------- Lightbox ---------- */
+  .lb{
+    position:fixed;inset:0;z-index:100;background:rgba(15,23,42,.86);
+    display:none;align-items:center;justify-content:center;padding:var(--s-5);
+    backdrop-filter:blur(4px);
+  }
+  .lb.open{display:flex;animation:fade .2s ease}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .lb img{
+    max-width:96vw;max-height:90vh;border-radius:10px;box-shadow:var(--c-shadow-lg);
+    background:#fff;
+  }
+  .lb .cap{
+    position:absolute;bottom:22px;left:50%;transform:translateX(-50%);
+    color:#fff;font-size:14px;font-weight:600;background:rgba(0,0,0,.4);
+    padding:8px 16px;border-radius:99px;
+  }
+  .lb .x{
+    position:absolute;top:18px;right:22px;color:#fff;font-size:26px;cursor:pointer;
+    width:42px;height:42px;border-radius:99px;background:rgba(255,255,255,.12);
+    display:grid;place-items:center;transition:.15s;
+  }
+  .lb .x:hover{background:rgba(255,255,255,.24)}
+
+  @media (max-width:560px){
+    .section-head .sub{display:none}
+    .grid{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <div class="logo">R</div>
+      <div class="name">RimeConfig <span class="ver">v0.2.0</span></div>
+    </div>
+    <nav class="nav">
+      <a href="#skins">皮肤方案</a>
+      <a href="#pages">功能页面</a>
+      <a href="#dialogs">弹窗与托盘</a>
+      <a href="#switcher">主题切换</a>
+      <a href="#proof">主题适配</a>
+      <a href="#states">交互状态</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <h1>RimeConfig <span class="accent">设计总览</span></h1>
+  <p>一套面向 Windows 桌面的 RIME 配置管理工具界面设计系统。以「设计令牌 → 三套可切换皮肤 → 统一组件库」为主线，确保视觉一致性与无障碍（WCAG AA）合规。</p>
+  <div class="meta">
+    <span class="chip">窗口 <b>1180 × 760</b></span>
+    <span class="chip">皮肤包 <b>3 套</b></span>
+    <span class="chip">组件 <b>按钮/输入/表格/徽章/状态栏</b></span>
+    <span class="chip">对比度 <b>≥ 4.5:1</b></span>
+    <span class="chip">技术栈 <b>PySide6 + QSS</b></span>
+  </div>
+</section>
+
+<main id="root"></main>
+
+<div class="foot">
+  RimeConfig 0.2.0 界面设计系统 · 全部为静态 mockup（HTML → 无头 Chrome 渲染），用于确认视觉方向与皮肤切换方案，尚未接入业务功能。
+</div>
+
+<!-- Lightbox -->
+<div class="lb" id="lb">
+  <div class="x" id="lbX">×</div>
+  <img id="lbImg" src="" alt="">
+  <div class="cap" id="lbCap"></div>
+</div>
+
+<script>
+const DATA = [
+  {
+    id:"skins", title:"三套皮肤方案", sub:"可在设置页一键切换",
+    items:[
+      {img:"concepts/A_Fluent_Light.png", color:"#185FA5", title:"A · Fluent Light", desc:"品牌蓝 #185FA5，现代简洁风格，主界面默认皮肤，WCAG AA 对比度达标。"},
+      {img:"concepts/B_Dark_Pro.png", color:"#4A9EFF", title:"B · Dark Pro", desc:"炭灰底 + 亮蓝 #4A9EFF 强调色，护眼夜间风，适合暗光环境长期使用。"},
+      {img:"concepts/C_Ink_Scholar.png", color:"#B23A2E", title:"C · Ink Scholar", desc:"宣纸暖色 #F5F1E8 + 黛青 #2F5D50 / 朱砂 #B23A2E，衬线标题，文人书房气质。"},
+    ]
+  },
+  {
+    id:"pages", title:"功能页面", sub:"词库 / 符号 / 方案 / 设置",
+    items:[
+      {img:"themes/symbols_page.png", color:"#185FA5", title:"符号管理页（Light）", desc:"分类符号库，左侧分类树 + 右侧符号网格，支持搜索与拖拽收藏。"},
+      {img:"themes/schema_page.png", color:"#185FA5", title:"方案编辑页（Light）", desc:"rime_frost.schema.yaml 编辑，开关 / 候选词数 / 折叠节区，表单化呈现。"},
+      {img:"themes/settings_page.png", color:"#185FA5", title:"设置页（Light）", desc:"常规 / 外观 / 关于分组，含主题切换卡片入口与路径配置。"},
+    ]
+  },
+  {
+    id:"dialogs", title:"弹窗与托盘", sub:"Quick Add / Editor / Tray",
+    items:[
+      {img:"themes/quick_add_dialog.png", color:"#185FA5", title:"快速添加词条弹窗", desc:"Ctrl+Alt+Q 唤起，输入词条 / 编码 / 权重，实时拼音预览与冲突提示。"},
+      {img:"themes/phrase_editor_dialog.png", color:"#185FA5", title:"词条编辑器弹窗", desc:"编辑已有词条全字段，含拼音自动生成、权重滑块与删除确认。"},
+      {img:"themes/tray_menu.png", color:"#185FA5", title:"系统托盘菜单", desc:"静默驻留，一键打开主界面 / 切换皮肤 / 快速收藏 / 退出。"},
+    ]
+  },
+  {
+    id:"switcher", title:"主题切换器", sub:"设置页交互",
+    items:[
+      {img:"themes/settings_theme_switcher.png", color:"#185FA5", title:"三选一皮肤卡片", desc:"设置页「外观」区的皮肤选择卡，悬停预览，选中打勾，实时套用无需重启。"},
+    ]
+  },
+  {
+    id:"proof", title:"主题适配验证", sub:"同组件跨皮肤一致性",
+    items:[
+      {img:"themes/schema_page_dark.png", color:"#4A9EFF", title:"方案页 · Dark Pro 版", desc:"验证开关 / 复选框 / 折叠控件在暗色皮肤下的对比度与触控尺寸。"},
+      {img:"themes/symbols_page_ink.png", color:"#B23A2E", title:"符号页 · Ink Scholar 版", desc:"验证衬线标题、印章标识与渐变装饰条在宣纸风下的质感落地。"},
+    ]
+  },
+  {
+    id:"states", title:"交互状态", sub:"空态 / 加载态 / 批量选择态",
+    items:[
+      {img:"themes/state_empty.png", color:"#185FA5", title:"空态 Empty", desc:"词库 0 条时居中插画 + 「词库还是空的」文案 + 主操作按钮引导新增。"},
+      {img:"themes/state_loading.png", color:"#185FA5", title:"加载态 Loading", desc:"骨架屏行 + 微光动画，工具栏禁用，状态栏旋转 spinner 显示「加载中…」。"},
+      {img:"themes/state_batch.png", color:"#185FA5", title:"批量选择态 Batch", desc:"顶部蓝色批量条显示「已选 N 项」+ 批量删除 / 导出 CSV / 取消，行内复选框。"},
+    ]
+  },
+];
+
+const root = document.getElementById("root");
+DATA.forEach((sec, i)=>{
+  const wrap = document.createElement("section");
+  wrap.className = "section"; wrap.id = sec.id;
+  const head = document.createElement("div");
+  head.className = "section-head";
+  head.innerHTML = `<div class="num">${i+1}</div><h2>${sec.title}</h2><div class="sub">${sec.sub}</div>`;
+  wrap.appendChild(head);
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  sec.items.forEach(it=>{
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = `
+      <div class="thumb" data-img="${it.img}" data-cap="${it.title}">
+        <img src="${it.img}" alt="${it.title}" loading="lazy">
+        <span class="zoom">点击放大</span>
+      </div>
+      <div class="body">
+        <div class="t"><span class="dot" style="background:${it.color}"></span>${it.title}</div>
+        <div class="d">${it.desc}</div>
+      </div>`;
+    grid.appendChild(card);
+  });
+  wrap.appendChild(grid);
+  root.appendChild(wrap);
+});
+
+// Lightbox
+const lb = document.getElementById("lb");
+const lbImg = document.getElementById("lbImg");
+const lbCap = document.getElementById("lbCap");
+document.querySelectorAll(".thumb").forEach(t=>{
+  t.addEventListener("click", ()=>{
+    lbImg.src = t.dataset.img;
+    lbCap.textContent = t.dataset.cap;
+    lb.classList.add("open");
+  });
+});
+function closeLb(){ lb.classList.remove("open"); lbImg.src=""; }
+document.getElementById("lbX").addEventListener("click", closeLb);
+lb.addEventListener("click", e=>{ if(e.target===lb) closeLb(); });
+document.addEventListener("keydown", e=>{ if(e.key==="Escape") closeLb(); });
+</script>
+</body>
+</html>

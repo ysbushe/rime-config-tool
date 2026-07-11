@@ -1,0 +1,99 @@
+/* ============================================================
+   RimeConfig · Theme C — Ink Scholar (水墨 · 暖纸)
+   自包含 QSS 骨架（值对应 TOKENS.md 中 C 套令牌）
+   注意：C 含专属装饰（左侧渐变条 + 朱砂印章 Logo + 宋体标题），
+   由 theme.py 在切到 ink 时一并注入，切走时移除。
+   ============================================================ */
+
+/* ---- 令牌 ----
+   --bg-app:#F5F1E8; --bg-surface:#FBF8F0; --bg-sidebar:#EBE2CF;
+   --bg-hover:#F1E8D6; --bg-active-nav:#2F5D50;
+   --border:#D8CDB8; --border-strong:#CDBE9F;
+   --text-primary:#2B2620; --text-secondary:#7A6E52; --text-muted:#A1916F;
+   --accent:#2F5D50; --accent-hover:#264C41; --accent-soft:#E3EFE8; --on-accent:#F3EFE4;
+   --seal:#B23A2E;
+   --success-text:#2F5D50; --success-bg:#E3EFE8;
+   --conflict-bg:#F8E7E2; --conflict-border:#E6B4A6; --conflict-text:#B23A2E;
+   --font-heading:"Source Han Serif SC","Noto Serif SC","SimSun",serif;
+*/
+
+QWidget#MainWindow {
+    background: #F5F1E8;
+    font-family: "Microsoft YaHei","PingFang SC",sans-serif;
+    font-size: 13px;
+    color: #2B2620;
+}
+
+QFrame#TitleBar { background: #EDE5D4; border-bottom: 1px solid #D8CDB8; }
+QLabel#BrandTitle {
+    font-family: "Source Han Serif SC","Noto Serif SC","SimSun",serif;
+    font-size: 15px; font-weight: 700; color: #2B2620; letter-spacing: 1px;
+}
+QLabel#BrandVersion { color: #A08E72; font-size: 11px; }
+QLabel#SealLogo {
+    background: #B23A2E; color: #F5F1E8; border-radius: 5px;
+    font-family: "Source Han Serif SC","Noto Serif SC","SimSun",serif;
+    font-weight: 700;
+}
+
+QListWidget#NavSidebar { background: #EBE2CF; border: none; outline: 0; }
+QListWidget#NavSidebar::item { padding: 9px 12px; border-radius: 7px; color: #5A4E3A; }
+QListWidget#NavSidebar::item:hover { background: #E2D8C2; }
+QListWidget#NavSidebar::item:selected { background: #2F5D50; color: #F3EFE4; font-weight: 600; }
+
+QLabel#PageTitle {
+    font-family: "Source Han Serif SC","Noto Serif SC","SimSun",serif;
+    font-size: 22px; font-weight: 700; color: #2B2620; letter-spacing: 1px;
+}
+QLabel#PageSubtitle { font-size: 12px; color: #9A8A6C; }
+
+/* 内容区左侧 3px 渐变装饰条（仅 ink 皮肤，由 theme.py 注入 QWidget#ContentFrame 样式） */
+QWidget#ContentFrame { border-left: 3px solid qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #B23A2E,stop:1 #2F5D50); }
+
+QPushButton {
+    height: 36px; padding: 0 16px; border-radius: 8px;
+    border: 1px solid transparent; font-size: 13px; font-weight: 600;
+    background: #FBF8F0; color: #5A4E3A; border-color: #CDBE9F;
+}
+QPushButton:hover { background: #EFE7D6; }
+QPushButton#Primary { background: #2F5D50; color: #F3EFE4; border: none; }
+QPushButton#Primary:hover { background: #264C41; }
+QPushButton:disabled { opacity: 0.6; }
+
+QLineEdit {
+    height: 36px; border: 1px solid #CDBE9F; border-radius: 8px;
+    background: #FBF8F0; padding: 0 12px; color: #2B2620; font-size: 13px;
+}
+QLineEdit:focus { border: 1px solid #2F5D50; }
+QLineEdit::placeholder { color: #AFA085; }
+
+QComboBox {
+    height: 36px; border: 1px solid #CDBE9F; border-radius: 8px;
+    background: #FBF8F0; padding: 0 12px; color: #5A4E3A; font-size: 12.5px;
+}
+QComboBox:hover { border: 1px solid #2F5D50; }
+QComboBox QAbstractItemView { background: #FBF8F0; border: 1px solid #D8CDB8; selection-background-color: #E3EFE8; color: #2B2620; }
+
+QTableWidget, QTableView {
+    background: #FBF8F0; border: 1px solid #D8CDB8; border-radius: 10px;
+    gridline-color: #EAE0CB; font-size: 13px; color: #3A3228;
+}
+QHeaderView::section {
+    background: #F0E9D8; color: #8A7A5C; font-weight: 600; font-size: 12px;
+    border: none; border-bottom: 1px solid #DDD2BB; padding: 11px 16px;
+}
+QTableWidget::item { padding: 11px 16px; border-bottom: 1px solid #EAE0CB; }
+QTableWidget::item:selected { background: #E3EFE8; color: #2F5D50; }
+QTableWidget::item:hover { background: #F4EEDD; }
+
+QLabel#WeightTag { background: #EDE3CE; color: #5A4E3A; border-radius: 5px; padding: 2px 7px; font-weight: 600; }
+QLabel#GroupTag { background: #E3EFE8; color: #2F5D50; border-radius: 20px; padding: 2px 9px; }
+
+QTableWidget::item[conflict="true"] { background: #F8E7E2; }
+QTableWidget::item[conflict="true"]:hover { background: #F4DAD2; }
+QLabel#ConflictBadge {
+    color: #B23A2E; background: #F8E0D8; border: 1px solid #E6B4A6;
+    border-radius: 20px; padding: 2px 8px; font-size: 11px; font-weight: 600;
+}
+
+QStatusBar { background: #EDE5D4; border-top: 1px solid #D8CDB8; color: #9A8A6C; font-size: 11.5px; }

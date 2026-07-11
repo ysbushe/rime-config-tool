@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>RimeConfig · 方案配置（深色）</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{width:1180px;height:760px;font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;}
+  body{background:#1A1A1A;overflow:hidden;}
+  .window{width:1180px;height:760px;background:#1A1A1A;display:flex;flex-direction:column;overflow:hidden;}
+  .titlebar{height:44px;flex:0 0 44px;background:#202020;border-bottom:1px solid #2E2E2E;display:flex;align-items:center;padding:0 8px 0 14px;}
+  .brand{display:flex;align-items:center;gap:9px;}
+  .logo{width:22px;height:22px;border-radius:6px;background:#4A9EFF;color:#0E0E0E;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;}
+  .title{font-size:13px;font-weight:600;color:#ECECEC;}
+  .ver{font-size:11px;color:#7A7A7A;margin-left:2px;}
+  .wc{margin-left:auto;display:flex;gap:2px;}
+  .wc div{width:34px;height:30px;display:flex;align-items:center;justify-content:center;color:#B5B5B5;border-radius:6px;}
+  .wc div:hover{background:#2C2C2C;}
+  .body{flex:1;display:flex;min-height:0;}
+  .sidebar{width:208px;flex:0 0 208px;background:#1E1E1E;border-right:1px solid #2E2E2E;padding:14px 10px;display:flex;flex-direction:column;gap:4px;}
+  .nl{font-size:11px;color:#6E6E6E;letter-spacing:.6px;padding:6px 10px 4px;}
+  .nav{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:7px;color:#B8BCC0;font-size:13.5px;cursor:default;position:relative;}
+  .nav svg{width:17px;height:17px;opacity:.8;}
+  .nav:hover{background:#272727;}
+  .nav.active{background:#243245;color:#CFE4FF;font-weight:600;}
+  .nav.active::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:#4A9EFF;}
+  .content{flex:1;display:flex;flex-direction:column;min-width:0;background:#1A1A1A;overflow:auto;}
+  .page-head{padding:18px 22px 12px;display:flex;align-items:flex-end;gap:12px;}
+  .ph-title{font-size:20px;font-weight:600;color:#F0F0F0;}
+  .ph-sub{font-size:12px;color:#82868B;}
+
+  .info{margin:0 22px 14px;background:#202020;border:1px solid #2E2E2E;border-radius:10px;padding:16px;display:flex;gap:18px;align-items:center;}
+  .info .ava{width:52px;height:52px;border-radius:12px;background:linear-gradient(135deg,#243245,#4A9EFF);color:#fff;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;}
+  .info .meta{display:flex;flex-direction:column;gap:3px;}
+  .info .nm{font-size:16px;font-weight:600;color:#F0F0F0;}
+  .info .sub{font-size:12.5px;color:#9AA0A6;}
+  .info .tag{margin-left:auto;font-size:11.5px;color:#9CC4F0;background:#243245;border:1px solid #2F4A66;border-radius:20px;padding:4px 11px;}
+
+  .card{margin:0 22px 14px;background:#202020;border:1px solid #2E2E2E;border-radius:10px;overflow:hidden;}
+  .card-h{padding:12px 16px;font-size:12px;font-weight:600;color:#82868B;background:#242424;border-bottom:1px solid #303030;}
+  .row{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid #262626;font-size:13px;color:#DEDEDE;}
+  .row:last-child{border-bottom:none;}
+  .row .desc{font-size:11.5px;color:#74797F;margin-left:10px;}
+  .chk{width:20px;height:20px;border-radius:5px;border:1.5px solid #4A5360;background:#232323;display:flex;align-items:center;justify-content:center;cursor:default;}
+  .chk.on{background:#4A9EFF;border-color:#4A9EFF;}
+  .chk.on svg{color:#0E0E0E;}
+  .row .right{margin-left:auto;display:flex;align-items:center;gap:10px;}
+  .key{font-family:"Cascadia Code",Consolas,monospace;font-size:12px;background:#2E3338;color:#CBD2D8;border:1px solid #3A4046;border-radius:5px;padding:3px 9px;}
+  .op{color:#9AA0A6;cursor:default;font-size:12.5px;}
+  .op:hover{color:#4A9EFF;}
+  .toggle{width:38px;height:22px;border-radius:20px;background:#4A9EFF;position:relative;cursor:default;}
+  .toggle::after{content:"";position:absolute;right:2px;top:2px;width:18px;height:18px;border-radius:50%;background:#0E0E0E;}
+  .toggle.off{background:#3A3A3A;}
+  .toggle.off::after{right:auto;left:2px;background:#B5B5B5;}
+  .note{margin:0 22px 20px;font-size:11.5px;color:#74797F;display:flex;align-items:center;gap:6px;}
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <div class="brand"><div class="logo">R</div><span class="title">RIME 配置小工具</span><span class="ver">v0.2.0</span></div>
+    <div class="wc"><div>—</div><div>×</div></div>
+  </div>
+  <div class="body">
+    <div class="sidebar">
+      <div class="nl">管理</div>
+      <div class="nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h16M4 18h10"/></svg>词库管理</div>
+      <div class="nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M11 8h6M8 11v6"/></svg>符号表</div>
+      <div class="nav active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/></svg>方案配置</div>
+      <div class="nl">系统</div>
+      <div class="nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>设置</div>
+    </div>
+    <div class="content">
+      <div class="page-head"><div><div class="ph-title">方案配置</div><div class="ph-sub">rime_frost.schema.yaml · 受限配置</div></div></div>
+      <div class="info">
+        <div class="ava">霜</div>
+        <div class="meta"><div class="nm">白霜拼音</div><div class="sub">schema_id：rime_frost ｜ 版本 0.2.0 ｜ 作者 _ice_</div></div>
+        <div class="tag">只读元信息</div>
+      </div>
+      <div class="card">
+        <div class="card-h">开关（switches）</div>
+        <div class="row"><div class="chk on"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-11"/></svg></div>简繁转换<span class="desc">繁简输出切换</span></div>
+        <div class="row"><div class="chk on"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-11"/></svg></div>全角 / 半角<span class="desc">标点与字母形态</span></div>
+        <div class="row"><div class="chk on"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-11"/></svg></div>模糊音 · 平翘舌<span class="desc">z / zh 互混</span></div>
+        <div class="row"><div class="chk off"></div>模糊音 · 前后鼻音<span class="desc">n / ng 互混</span></div>
+        <div class="row"><div class="chk on"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 12l5 5 9-11"/></svg></div>Emoji 候选<span class="desc">候选栏显示表情</span></div>
+      </div>
+      <div class="card">
+        <div class="card-h">常用按键（key_bindings）</div>
+        <div class="row">翻页 · 上一页<span class="right"><span class="key">PageUp</span><span class="op">编辑</span></span></div>
+        <div class="row">翻页 · 下一页<span class="right"><span class="key">PageDown</span><span class="op">编辑</span></span></div>
+        <div class="row">选重<span class="right"><span class="key">Shift+Enter</span><span class="op">编辑</span></span></div>
+        <div class="row">清空编码<span class="right"><span class="key">Esc</span><span class="op">编辑</span></span></div>
+      </div>
+      <div class="card">
+        <div class="card-h">引擎引用</div>
+        <div class="row">启用 custom_phrase（自定义短语）<span class="right"><div class="toggle"></div></span></div>
+      </div>
+      <div class="note"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></svg>仅暴露受限配置项，避免误改原生 YAML 导致输入法异常。</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

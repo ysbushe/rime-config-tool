@@ -1,0 +1,106 @@
+/* ============================================================
+   RimeConfig · Theme A — Fluent Light
+   自包含 QSS 骨架（值对应 TOKENS.md 中 A 套令牌）
+   落地方式：theme.py 直接 setStyleSheet，或作为占位符模板替换
+   覆盖：窗口 / 标题栏 / 导航 / 按钮 / 输入 / 表格 / 徽标 / 状态栏
+   ============================================================ */
+
+/* ---- 令牌（参考，QSS 不原生支持变量；若走模板方式此处改为 @TOKEN@） ----
+   --bg-app:#F3F3F3; --bg-surface:#FFFFFF; --bg-sidebar:#FAFAFA;
+   --bg-hover:#EDEDED; --bg-active-nav:#E6F0F9;
+   --border:#E5E5E5; --border-strong:#D8D8D8;
+   --text-primary:#1B1B1B; --text-secondary:#5A6066; --text-muted:#8A8A8A;
+   --accent:#185FA5; --accent-hover:#14507F; --accent-soft:#E6F0F9; --on-accent:#FFFFFF;
+   --success-text:#1E7E45; --success-bg:#EAF4EE;
+   --conflict-bg:#FFF7E6; --conflict-border:#F2D69A; --conflict-text:#B26A00;
+*/
+
+QWidget#MainWindow {
+    background: #F3F3F3;
+    font-family: "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;
+    font-size: 13px;
+    color: #1B1B1B;
+}
+
+/* 标题栏 */
+QFrame#TitleBar {
+    background: #FAFAFA;
+    border-bottom: 1px solid #E5E5E5;
+}
+QLabel#BrandTitle {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1B1B1B;
+}
+QLabel#BrandVersion { color: #8A8A8A; font-size: 11px; }
+
+/* 左侧导航（以 QListWidget 承载，每项 QWidget 容器） */
+QListWidget#NavSidebar {
+    background: #FAFAFA;
+    border: none;
+    outline: 0;
+}
+QListWidget#NavSidebar::item { padding: 9px 11px; border-radius: 7px; color: #33373A; }
+QListWidget#NavSidebar::item:hover { background: #EDEDED; }
+QListWidget#NavSidebar::item:selected {
+    background: #E6F0F9; color: #185FA5; font-weight: 600;
+}
+
+/* 页面标题 */
+QLabel#PageTitle { font-size: 20px; font-weight: 600; color: #1B1B1B; }
+QLabel#PageSubtitle { font-size: 12px; color: #8A8A8A; }
+
+/* 按钮 */
+QPushButton {
+    height: 36px; padding: 0 15px; border-radius: 8px;
+    border: 1px solid transparent; font-size: 13px; font-weight: 600;
+    background: #FFFFFF; color: #33373A; border-color: #D8D8D8;
+}
+QPushButton:hover { background: #F3F3F3; }
+QPushButton#Primary { background: #185FA5; color: #FFFFFF; border: none; }
+QPushButton#Primary:hover { background: #14507F; }
+QPushButton:disabled { opacity: 0.6; }
+
+/* 输入框 / 搜索 */
+QLineEdit {
+    height: 36px; border: 1px solid #D8D8D8; border-radius: 8px;
+    background: #FFFFFF; padding: 0 12px; color: #1B1B1B; font-size: 13px;
+}
+QLineEdit:focus { border: 1px solid #185FA5; }
+QLineEdit::placeholder { color: #9AA0A6; }
+
+/* 下拉（分组 / 排序） */
+QComboBox {
+    height: 36px; border: 1px solid #D8D8D8; border-radius: 8px;
+    background: #FFFFFF; padding: 0 12px; color: #33373A; font-size: 12.5px;
+}
+QComboBox:hover { border: 1px solid #185FA5; }
+QComboBox QAbstractItemView { background: #FFFFFF; border: 1px solid #E5E5E5; selection-background-color: #E6F0F9; }
+
+/* 表格 */
+QTableWidget, QTableView {
+    background: #FFFFFF; border: 1px solid #E5E5E5; border-radius: 10px;
+    gridline-color: #F1F1F1; font-size: 13px; color: #2B2B2B;
+}
+QHeaderView::section {
+    background: #FBFBFB; color: #6B7075; font-weight: 600; font-size: 12px;
+    border: none; border-bottom: 1px solid #ECECEC; padding: 11px 16px;
+}
+QTableWidget::item { padding: 11px 16px; border-bottom: 1px solid #F1F1F1; }
+QTableWidget::item:selected { background: #E6F0F9; color: #185FA5; }
+QTableWidget::item:hover { background: #FAFBFC; }
+
+/* 权重标签 / 分组标签 */
+QLabel#WeightTag { background: #EFF1F3; color: #444; border-radius: 5px; padding: 2px 7px; font-weight: 600; }
+QLabel#GroupTag { background: #EAF0F6; color: #2E5E8C; border-radius: 20px; padding: 2px 9px; }
+
+/* 冲突高亮行（由 phrase_table_model 调 theme.conflict_background() 注入） */
+QTableWidget::item[conflict="true"] { background: #FFF7E6; }
+QTableWidget::item[conflict="true"]:hover { background: #FCEFCF; }
+QLabel#ConflictBadge {
+    color: #B26A00; background: #FDEFD3; border: 1px solid #F2D69A;
+    border-radius: 20px; padding: 2px 8px; font-size: 11px; font-weight: 600;
+}
+
+/* 状态栏 */
+QStatusBar { background: #FAFAFA; border-top: 1px solid #E5E5E5; color: #7A7F85; font-size: 11.5px; }

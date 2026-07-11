@@ -1,0 +1,28 @@
+{
+  "_comment": "RIME 小狼毫（白霜拼音 frost）受管字段的默认映射。\n本文件是『字段不写死』的唯一数据源：SchemaRepo / SymbolsRepo 暴露哪些可编辑字段，完全由 FieldMap 读取此处决定。\n真实结构已按 rime_frost.schema.yaml 与 symbols_v.yaml 校准。修改这里即可调整 UI 暴露范围，无需改代码。",
+  "schema": {
+    "switch_names": [
+      "ascii_mode",
+      "ascii_punct",
+      "traditionalization",
+      "full_shape",
+      "search_single_char"
+    ],
+    "custom_phrase_ref": "table_translator@custom_phrase",
+    "custom_phrase_enabled": true,
+    "key_binding_labels": [
+      "翻页（Page_Up / Page_Down）",
+      "选重（Shift+Letter）",
+      "光标移动（Left / Right）",
+      "编辑（BackSpace / Return）"
+    ]
+  },
+  "symbols": {
+    "categories": [
+      "/fh", "/dn", "/xq", "/mj", "/sz", "/pk", "/bq", "/tq",
+      "/yy", "/lx", "/bg", "/tt", "/xz", "/xh", "/fk", "/jh",
+      "/jt", "/sx", "/xl", "/dw", "/hb", "/jg", "/kx", "/bh",
+      "/bd", "/py", "/zy", "/sd", "/jm", "/hw"
+    ]
+  }
+}

@@ -1,0 +1,378 @@
+/* RimeConfig 0.2.0 · 单模板（@ACCENT@ 等令牌占位符，由 theme.py 注入三套皮肤）
+   选择器严格沿用真实代码（不改控件对象名）；色值/字体 token 化，
+   取值见 design/themes/TOKENS.md §1.1 权威值（A/B/C）。
+   固定字号 / 间距 / 圆角保留字面量（零抖动）。
+
+   dark 独有选择器已并入本模板：QMenu::separator / QTableView（含 ::item:selected）
+   / QComboBox::drop-down / QSpinBox::up-button,down-button，均用同样占位符映射。
+*/
+
+* {
+    font-family: @FONT_UI@;
+    font-size: 13px;
+    color: @TEXT_PRIMARY@;
+}
+
+QWidget {
+    background-color: @BG_APP@;
+}
+
+/* ---------- 主窗口 / 容器卡片 ---------- */
+QMainWindow, QWidget#Central {
+    background-color: @BG_APP@;
+}
+
+Card, QGroupBox {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+}
+
+QGroupBox {
+    margin-top: 10px;
+    padding: 10px;
+    font-weight: bold;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 4px;
+    color: @ACCENT@;
+}
+
+/* ---------- 侧栏导航 ---------- */
+QListWidget#Sidebar {
+    background-color: @BG_SIDEBAR@;
+    border: none;
+    border-right: 1px solid @BORDER@;
+    padding: 8px;
+    outline: 0;
+}
+
+QListWidget#Sidebar::item {
+    height: 38px;
+    padding-left: 14px;
+    border-radius: 8px;
+    color: @TEXT_PRIMARY@;
+}
+
+QListWidget#Sidebar::item:hover {
+    background-color: @BG_HOVER@;
+}
+
+QListWidget#Sidebar::item:selected {
+    background-color: @SELECTION_BG@;
+    color: @SELECTION_TEXT@;
+    font-weight: bold;
+}
+
+/* ---------- 按钮 ---------- */
+QPushButton {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 6px 14px;
+    color: @TEXT_PRIMARY@;
+}
+
+QPushButton:hover {
+    border-color: @ACCENT_HOVER@;
+    color: @ACCENT@;
+}
+
+QPushButton:pressed {
+    background-color: @BG_ACTIVE_NAV@;
+}
+
+QPushButton:disabled {
+    color: @TEXT_MUTED@;
+    background-color: @BG_APP@;
+    border-color: @BORDER@;
+}
+
+QPushButton#Primary {
+    background-color: @ACCENT@;
+    border: none;
+    color: @ON_ACCENT@;
+    font-weight: bold;
+}
+
+QPushButton#Primary:hover {
+    background-color: @ACCENT_HOVER@;
+    color: @ON_ACCENT@;
+}
+
+QPushButton#Primary:disabled {
+    background-color: @BORDER_STRONG@;
+    border: 1px solid @BORDER_STRONG@;
+    color: @TEXT_MUTED@;
+}
+
+QPushButton#Danger {
+    border-color: @BORDER@;
+    color: @CONFLICT_TEXT@;
+}
+
+QPushButton#Danger:hover {
+    border-color: @CONFLICT_TEXT@;
+    color: @CONFLICT_TEXT@;
+}
+
+/* ---------- 输入框 ---------- */
+QLineEdit, QSpinBox, QComboBox, QTextEdit {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 5px 8px;
+}
+
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QTextEdit:focus {
+    border: 1px solid @ACCENT_HOVER@;
+}
+
+QComboBox QAbstractItemView {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    selection-background-color: @SELECTION_BG@;
+    selection-color: @SELECTION_TEXT@;
+}
+
+/* dark 独有选择器：下拉箭头（无边框） */
+QComboBox::drop-down {
+    border: none;
+}
+
+/* dark 独有选择器：微调按钮底色 */
+QSpinBox::up-button, QSpinBox::down-button {
+    background-color: @BG_ELEVATED@;
+}
+
+/* ---------- 表格 ---------- */
+QTableWidget {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    gridline-color: @BORDER@;
+    selection-background-color: @SELECTION_BG@;
+    selection-color: @SELECTION_TEXT@;
+}
+
+QHeaderView::section {
+    background-color: @BG_APP@;
+    border: none;
+    border-bottom: 1px solid @BORDER@;
+    padding: 6px;
+    color: @TEXT_SECONDARY@;
+    font-weight: bold;
+}
+
+QTableWidget::item:selected {
+    background-color: @SELECTION_BG@;
+    color: @SELECTION_TEXT@;
+}
+
+/* 冲突高亮行 */
+QTableWidget::item[conflict="true"] {
+    background-color: @CONFLICT_BG@;
+    color: @CONFLICT_TEXT@;
+}
+
+/* dark 独有选择器：QTableView（与 QTableWidget 视觉一致） */
+QTableView {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    gridline-color: @BORDER@;
+    selection-background-color: @SELECTION_BG@;
+    selection-color: @SELECTION_TEXT@;
+    color: @TEXT_PRIMARY@;
+}
+
+QTableView::item:selected {
+    background-color: @SELECTION_BG@;
+    color: @SELECTION_TEXT@;
+}
+
+/* ---------- 复选框 / 开关 ---------- */
+QCheckBox {
+    spacing: 6px;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QCheckBox::indicator:unchecked {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 4px;
+}
+
+QCheckBox::indicator:checked {
+    background-color: @ACCENT@;
+    border: 1px solid @ACCENT@;
+    border-radius: 4px;
+    image: url(check.svg);
+}
+
+QCheckBox::indicator:indeterminate {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @ACCENT@;
+    border-radius: 4px;
+    image: url(check.svg);
+}
+
+QCheckBox::indicator:disabled:unchecked {
+    background-color: @BG_APP@;
+    border: 1px solid @BORDER@;
+    border-radius: 4px;
+}
+
+QCheckBox::indicator:disabled:checked {
+    background-color: @BORDER_STRONG@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 4px;
+    image: url(check.svg);
+}
+
+/* 表格内 item 复选框（最左『选择』列）：原生小方块 → 真对勾 */
+QTableView::indicator {
+    width: 16px;
+    height: 16px;
+}
+
+QTableView::indicator:unchecked {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 4px;
+}
+
+QTableView::indicator:checked {
+    background-color: @ACCENT@;
+    border: 1px solid @ACCENT@;
+    border-radius: 4px;
+    image: url(check.svg);
+}
+
+QTableView::indicator:disabled:unchecked {
+    background-color: @BG_APP@;
+    border: 1px solid @BORDER@;
+    border-radius: 4px;
+}
+
+QTableView::indicator:disabled:checked {
+    background-color: @BORDER_STRONG@;
+    border: 1px solid @BORDER_STRONG@;
+    border-radius: 4px;
+    image: url(check.svg);
+}
+
+/* ---------- 选项卡（若使用 QTabWidget） ---------- */
+QTabWidget::pane {
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    top: -1px;
+}
+
+QTabBar::tab {
+    background-color: @BG_APP@;
+    border: 1px solid @BORDER@;
+    border-bottom: none;
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+    padding: 6px 16px;
+}
+
+QTabBar::tab:selected {
+    background-color: @BG_SURFACE@;
+    color: @ACCENT@;
+    font-weight: bold;
+    border-top: 3px solid @ACCENT@;
+}
+
+QTabBar::tab:!selected {
+    color: @TEXT_SECONDARY@;
+}
+
+QTabBar::tab:hover {
+    color: @ACCENT@;
+}
+
+/* ---------- 菜单 ---------- */
+QMenu {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 18px;
+    border-radius: 6px;
+}
+
+QMenu::item:selected {
+    background-color: @SELECTION_BG@;
+    color: @SELECTION_TEXT@;
+}
+
+/* dark 独有选择器：菜单分隔线 */
+QMenu::separator {
+    height: 1px;
+    background: @BORDER_STRONG@;
+    margin: 4px 8px;
+}
+
+/* ---------- 状态栏 / 滚动条 ---------- */
+QStatusBar {
+    background-color: @BG_SURFACE@;
+    border-top: 1px solid @BORDER@;
+    color: @TEXT_MUTED@;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+}
+
+QScrollBar::handle:vertical {
+    background: @BORDER_STRONG@;
+    border-radius: 5px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: @BORDER_STRONG@;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+/* ---------- 区块标题（替代禁用主按钮模拟标题） ---------- */
+QLabel#BlockTitle {
+    font-family: @FONT_HEADING@;
+    font-size: 14px;
+    font-weight: bold;
+    color: @TEXT_PRIMARY@;
+    padding: 2px 2px 6px 2px;
+}
+
+/* ---------- 语义化标签（错误 / 信息 / 静音信息） ---------- */
+*[role="error"] {
+    color: @CONFLICT_TEXT@;
+}
+
+*[role="success"] {
+    color: @SUCCESS_TEXT@;
+}
+
+*[role="info"] {
+    color: @TEXT_MUTED@;
+}
+
+QLabel#MutedVersion {
+    color: @TEXT_MUTED@;
+    font-size: 12px;
+}

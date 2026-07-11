@@ -1,0 +1,18 @@
+# 个人 RIME 小狼毫配置小工具 - 依赖清单
+# 运行：pip install -r requirements.txt
+# 打包：pyinstaller build.spec
+
+# GUI 框架
+PySide6>=6.5.0
+
+# 拼音处理（无声调全拼生成）
+pypinyin==0.55.0
+
+# YAML 读写（schema / symbols 配置）
+pyyaml>=6.0
+
+# 全局热键后端（默认，可降级到 AHK v2）
+keyboard>=0.13.5
+
+# 开机自启快捷方式（Startup 目录 .lnk）
+pywin32>=306; sys_platform == 'win32'

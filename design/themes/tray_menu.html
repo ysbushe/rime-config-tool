@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>RimeConfig · 托盘菜单</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{width:1180px;height:760px;font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;}
+  body{background:#DCE0E4;overflow:hidden;}
+  .stage{width:1180px;height:760px;position:relative;}
+  .tray{position:absolute;right:60px;bottom:70px;width:248px;background:#fff;border-radius:10px;box-shadow:0 12px 34px rgba(0,0,0,.20);border:1px solid #E6E6E6;padding:6px;overflow:hidden;}
+  .th{display:flex;align-items:center;gap:9px;padding:9px 11px;}
+  .th .logo{width:22px;height:22px;border-radius:6px;background:#185FA5;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;}
+  .th .t{font-size:13px;font-weight:600;color:#1B1B1B;}
+  .sep{height:1px;background:#EDEDED;margin:4px 6px;}
+  .mi{display:flex;align-items:center;gap:11px;padding:10px 12px;border-radius:7px;color:#2B2B2B;font-size:13px;cursor:default;}
+  .mi svg{width:16px;height:16px;opacity:.8;}
+  .mi:hover{background:#F0F4F8;}
+  .mi .sub{margin-left:auto;color:#9AA0A6;font-size:12px;display:flex;align-items:center;gap:6px;}
+  .dot{width:8px;height:8px;border-radius:50%;background:#2E9E5B;}
+  .mi.danger{color:#C42B1C;}
+  .mi.danger:hover{background:#FDECEA;}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="tray">
+    <div class="th"><div class="logo">R</div><div class="t">RIME 配置小工具</div></div>
+    <div class="sep"></div>
+    <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/></svg>打开主窗口</div>
+    <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 12a8 8 0 0 1 14-5M20 12a8 8 0 0 1-14 5"/><path d="M18 3v4h-4M6 21v-4h4"/></svg>一键部署<span class="sub" style="color:#B26A00">沙盒禁用</span></div>
+    <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg>热键收藏<span class="sub">开 <span class="dot"></span></span></div>
+    <div class="sep"></div>
+    <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>设置</div>
+    <div class="mi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>关于</div>
+    <div class="sep"></div>
+    <div class="mi danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>退出</div>
+  </div>
+</div>
+</body>
+</html>

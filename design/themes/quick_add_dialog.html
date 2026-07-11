@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>RimeConfig · 快速收藏弹窗</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{width:1180px;height:760px;font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;}
+  body{background:#E9ECEF;overflow:hidden;}
+  .backdrop{width:1180px;height:760px;display:flex;align-items:center;justify-content:center;}
+  .dialog{width:440px;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.22);overflow:hidden;}
+  .dlg-head{height:46px;display:flex;align-items:center;padding:0 8px 0 18px;border-bottom:1px solid #ECECEC;}
+  .dlg-title{font-size:15px;font-weight:600;color:#1B1B1B;display:flex;align-items:center;gap:8px;}
+  .dlg-title .ic{width:20px;height:20px;border-radius:5px;background:#185FA5;color:#fff;display:flex;align-items:center;justify-content:center;}
+  .x{margin-left:auto;width:32px;height:32px;display:flex;align-items:center;justify-content:center;color:#5A6066;border-radius:7px;cursor:default;}
+  .x:hover{background:#F0F0F0;}
+  .dlg-body{padding:18px 20px;display:flex;flex-direction:column;gap:15px;}
+  .fld{display:flex;flex-direction:column;gap:6px;}
+  .fld label{font-size:12.5px;color:#5A6066;font-weight:500;}
+  .inp{height:36px;border:1px solid #D8D8D8;background:#fff;border-radius:8px;padding:0 12px;font-size:13px;color:#1B1B1B;outline:none;width:100%;}
+  .inp:focus{border-color:#185FA5;box-shadow:0 0 0 3px rgba(24,95,165,.12);}
+  .hint{font-size:11px;color:#9AA0A6;}
+  .row2{display:flex;gap:12px;}
+  .row2 .fld{flex:1;}
+  .sel{height:36px;padding:0 30px 0 12px;border:1px solid #D8D8D8;background:#fff;border-radius:8px;font-size:13px;color:#33373A;display:flex;align-items:center;position:relative;cursor:default;}
+  .sel::after{content:"";position:absolute;right:11px;top:50%;width:7px;height:7px;border-right:1.5px solid #888;border-bottom:1.5px solid #888;transform:translateY(-65%) rotate(45deg);}
+  .num{height:36px;width:84px;border:1px solid #D8D8D8;background:#fff;border-radius:8px;padding:0 10px;font-size:13px;color:#1B1B1B;text-align:center;}
+  .dlg-foot{height:60px;display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 20px;border-top:1px solid #ECECEC;background:#FBFBFB;}
+  .btn{height:36px;padding:0 18px;border-radius:8px;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:default;border:1px solid transparent;}
+  .btn-primary{background:#185FA5;color:#fff;}
+  .btn-primary:hover{background:#14507F;}
+  .btn-ghost{background:#fff;color:#33373A;border-color:#D8D8D8;}
+  .btn-ghost:hover{background:#F3F3F3;}
+</style>
+</head>
+<body>
+<div class="backdrop">
+  <div class="dialog">
+    <div class="dlg-head">
+      <div class="dlg-title"><span class="ic"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></span>收藏到词库</div>
+      <div class="x">✕</div>
+    </div>
+    <div class="dlg-body">
+      <div class="fld"><label>文本</label><input class="inp" value="银行"></div>
+      <div class="fld"><label>编码</label><input class="inp" value="yinhang" style="border-color:#185FA5;box-shadow:0 0 0 3px rgba(24,95,165,.12);"><div class="hint">默认全拼，可手动修改编码</div></div>
+      <div class="row2">
+        <div class="fld"><label>权重</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <div class="sel" style="flex:1;">自定义（7）</div>
+            <input class="num" value="7">
+          </div>
+          <div class="hint">下拉可选 1 / 2 / 3 / 自定义…</div>
+        </div>
+        <div class="fld" style="flex:0 0 150px;"><label>分组</label><div class="sel">工作</div></div>
+      </div>
+    </div>
+    <div class="dlg-foot">
+      <button class="btn btn-ghost">取消</button>
+      <button class="btn btn-primary">收藏</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

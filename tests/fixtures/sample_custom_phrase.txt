@@ -1,0 +1,18 @@
+# Rime table
+# coding: utf-8
+# 以 Tab 分割：词汇<Tab>编码<Tab>权重
+# 以下为贴近真实「简码风格」的样例
+#
+焊接	hanj	1
+焊缝	hanf	1
+焊缝	hanfeng	1
+工程	gch	1
+工程	gongch	1
+武汉	wh	1
+甲方	jiaf	1
+箱型	xx	1
+箱型	xiangxing	1
+银行	yinhang	1
+银行	yinxing	1
+一行	ixing	1
+i	yi	2

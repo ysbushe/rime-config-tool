@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>RimeConfig · 空态</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{width:1180px;height:760px;font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;}
+  body{background:#F3F3F3;overflow:hidden;}
+  .window{width:1180px;height:760px;background:#F3F3F3;display:flex;flex-direction:column;overflow:hidden;}
+  .titlebar{height:44px;flex:0 0 44px;background:#FAFAFA;border-bottom:1px solid #E5E5E5;display:flex;align-items:center;padding:0 8px 0 14px;}
+  .brand{display:flex;align-items:center;gap:9px;}
+  .logo{width:22px;height:22px;border-radius:6px;background:#185FA5;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;}
+  .title{font-size:13px;font-weight:600;color:#1B1B1B;}
+  .ver{font-size:11px;color:#8A8A8A;margin-left:2px;}
+  .wc{margin-left:auto;display:flex;gap:2px;}
+  .wc div{width:34px;height:30px;display:flex;align-items:center;justify-content:center;color:#3B3B3B;border-radius:6px;}
+  .wc div:hover{background:#ECECEC;}
+  .body{flex:1;display:flex;min-height:0;}
+  .sidebar{width:208px;flex:0 0 208px;background:#FAFAFA;border-right:1px solid #E5E5E5;padding:14px 10px;display:flex;flex-direction:column;gap:4px;}
+  .nl{font-size:11px;color:#9A9A9A;letter-spacing:.6px;padding:6px 10px 4px;}
+  .nav{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:7px;color:#33373A;font-size:13.5px;cursor:default;}
+  .nav svg{width:17px;height:17px;opacity:.85;}
+  .nav:hover{background:#EDEDED;}
+  .nav.active{background:#E6F0F9;color:#185FA5;font-weight:600;}
+  .content{flex:1;display:flex;flex-direction:column;min-width:0;background:#F3F3F3;}
+  .page-head{padding:18px 22px 12px;display:flex;align-items:flex-end;gap:12px;}
+  .ph-title{font-size:20px;font-weight:600;color:#1B1B1B;}
+  .ph-sub{font-size:12px;color:#8A8A8A;}
+  .pill{margin-left:auto;display:inline-flex;align-items:center;gap:6px;background:#EAF4EE;color:#1E7E45;border:1px solid #CDEBD6;font-size:11.5px;padding:4px 10px;border-radius:20px;}
+  .pill .dot{width:7px;height:7px;border-radius:50%;background:#2E9E5B;}
+  .toolbar{display:flex;align-items:center;gap:10px;padding:4px 22px 14px;}
+  .search{position:relative;flex:1;max-width:340px;}
+  .search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:#9AA0A6;}
+  .search input{width:100%;height:36px;border:1px solid #D8D8D8;background:#fff;border-radius:8px;padding:0 12px 0 34px;font-size:13px;color:#1B1B1B;outline:none;}
+  .search input::placeholder{color:#9AA0A6;}
+  .btn{height:36px;padding:0 15px;border-radius:8px;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:default;border:1px solid transparent;}
+  .btn-primary{background:#185FA5;color:#fff;}
+  .btn-primary:hover{background:#14507F;}
+  .btn-ghost{background:#fff;color:#33373A;border-color:#D8D8D8;}
+  .btn-ghost:hover{background:#F3F3F3;}
+  .btn svg{width:15px;height:15px;}
+  .select{height:36px;padding:0 30px 0 12px;border:1px solid #D8D8D8;background:#fff;border-radius:8px;font-size:12.5px;color:#33373A;display:inline-flex;align-items:center;cursor:default;position:relative;}
+  .select::after{content:"";position:absolute;right:11px;top:50%;width:7px;height:7px;border-right:1.5px solid #888;border-bottom:1.5px solid #888;transform:translateY(-65%) rotate(45deg);}
+  .table-wrap{margin:0 22px;background:#fff;border:1px solid #E5E5E5;border-radius:10px;overflow:hidden;flex:1;min-height:0;display:flex;flex-direction:column;}
+  .thead{display:flex;padding:11px 16px;background:#FBFBFB;border-bottom:1px solid #ECECEC;font-size:12px;font-weight:600;color:#6B7075;}
+  .thead span{flex:1;}
+  .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#9AA0A6;}
+  .empty svg{width:96px;height:96px;opacity:.5;}
+  .empty h3{font-size:16px;font-weight:600;color:#5A6066;}
+  .empty p{font-size:13px;color:#9AA0A6;text-align:center;max-width:360px;line-height:1.6;}
+  .statusbar{height:34px;flex:0 0 34px;display:flex;align-items:center;gap:16px;padding:0 24px;font-size:11.5px;color:#7A7F85;border-top:1px solid #E5E5E5;background:#FAFAFA;}
+  .statusbar .save{margin-left:auto;color:#9A9A9A;}
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar"><div class="brand"><div class="logo">R</div><span class="title">RIME 配置小工具</span><span class="ver">v0.2.0</span></div><div class="wc"><div>—</div><div>×</div></div></div>
+  <div class="body">
+    <div class="sidebar">
+      <div class="nl">管理</div>
+      <div class="nav active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h16M4 18h10"/></svg>词库管理</div>
+      <div class="nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M11 8h6M8 11v6"/></svg>符号表</div>
+      <div class="nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/></svg>方案配置</div>
+      <div class="nl">系统</div>
+      <div class="nav"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>设置</div>
+    </div>
+    <div class="content">
+      <div class="page-head"><div><div class="ph-title">词库管理</div><div class="ph-sub">custom_phrase.txt · 共 0 条</div></div><span class="pill"><span class="dot"></span>已连接 · 自动部署开</span></div>
+      <div class="toolbar">
+        <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg><input placeholder="搜索汉字、拼音或分组…"></div>
+        <button class="btn btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新增</button>
+        <div class="select">分组：全部</div>
+        <div class="select">排序：权重</div>
+      </div>
+      <div class="table-wrap">
+        <div class="thead"><span>汉字</span><span>拼音</span><span>权重</span><span>分组</span><span>操作</span></div>
+        <div class="empty">
+          <svg viewBox="0 0 96 96" fill="none" stroke="#9AA0A6" stroke-width="2"><rect x="20" y="30" width="56" height="42" rx="6"/><path d="M20 42h56"/><path d="M34 30v-6a6 6 0 0 1 6-6h16a6 6 0 0 1 6 6v6"/><line x1="32" y1="54" x2="64" y2="54"/><line x1="32" y1="62" x2="54" y2="62"/></svg>
+          <h3>词库还是空的</h3>
+          <p>点击下方「+ 新增」手动添加词条，或选中任意文字后按 <b>Ctrl+Alt+Q</b> 快速收藏到词库。</p>
+          <button class="btn btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新增词条</button>
+        </div>
+      </div>
+      <div class="statusbar"><span>共 0 条</span><span>分组 0 个</span><span class="save">已保存</span></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

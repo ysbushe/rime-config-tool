@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>RimeConfig · Fluent Light</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{width:1180px;height:760px;font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased;}
+  body{background:#F3F3F3;overflow:hidden;}
+  .window{width:1180px;height:760px;background:#F3F3F3;display:flex;flex-direction:column;overflow:hidden;}
+
+  /* Title bar */
+  .titlebar{height:44px;flex:0 0 44px;background:#FAFAFA;border-bottom:1px solid #E5E5E5;
+    display:flex;align-items:center;padding:0 8px 0 14px;user-select:none;}
+  .brand{display:flex;align-items:center;gap:9px;}
+  .logo{width:22px;height:22px;border-radius:6px;background:#185FA5;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;}
+  .title{font-size:13px;font-weight:600;color:#1B1B1B;letter-spacing:.2px;}
+  .ver{font-size:11px;color:#8A8A8A;margin-left:2px;}
+  .win-controls{margin-left:auto;display:flex;gap:2px;}
+  .wc{width:34px;height:30px;display:flex;align-items:center;justify-content:center;color:#3B3B3B;cursor:default;border-radius:6px;}
+  .wc:hover{background:#ECECEC;}
+  .wc.close:hover{background:#C42B1C;color:#fff;}
+  .wc svg{width:11px;height:11px;}
+
+  /* Body */
+  .body{flex:1;display:flex;min-height:0;}
+  .sidebar{width:208px;flex:0 0 208px;background:#FAFAFA;border-right:1px solid #E5E5E5;padding:14px 10px;display:flex;flex-direction:column;gap:4px;}
+  .nav-label{font-size:11px;color:#9A9A9A;letter-spacing:.6px;padding:6px 10px 4px;}
+  .nav{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:7px;color:#33373A;font-size:13.5px;cursor:default;}
+  .nav svg{width:17px;height:17px;opacity:.85;}
+  .nav:hover{background:#EDEDED;}
+  .nav.active{background:#E6F0F9;color:#185FA5;font-weight:600;}
+  .nav.active svg{opacity:1;}
+  .side-foot{margin-top:auto;font-size:11px;color:#9A9A9A;padding:8px 11px;border-top:1px solid #ECECEC;display:flex;align-items:center;gap:7px;}
+  .dot{width:7px;height:7px;border-radius:50%;background:#2E9E5B;}
+
+  .content{flex:1;display:flex;flex-direction:column;min-width:0;background:#F3F3F3;}
+  .page-head{padding:18px 22px 12px;display:flex;align-items:flex-end;gap:12px;}
+  .ph-title{font-size:20px;font-weight:600;color:#1B1B1B;}
+  .ph-sub{font-size:12px;color:#8A8A8A;}
+  .pill{margin-left:auto;display:inline-flex;align-items:center;gap:6px;background:#EAF4EE;color:#1E7E45;border:1px solid #CDEBD6;font-size:11.5px;padding:4px 10px;border-radius:20px;}
+  .pill .dot{background:#2E9E5B;}
+
+  .toolbar{display:flex;align-items:center;gap:10px;padding:4px 22px 14px;}
+  .search{position:relative;flex:1;max-width:340px;}
+  .search svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:#9AA0A6;}
+  .search input{width:100%;height:36px;border:1px solid #D8D8D8;background:#fff;border-radius:8px;padding:0 12px 0 34px;font-size:13px;color:#1B1B1B;outline:none;}
+  .search input::placeholder{color:#9AA0A6;}
+  .search input:focus{border-color:#185FA5;box-shadow:0 0 0 3px rgba(24,95,165,.12);}
+  .btn{height:36px;padding:0 15px;border-radius:8px;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:6px;cursor:default;border:1px solid transparent;}
+  .btn-primary{background:#185FA5;color:#fff;}
+  .btn-primary:hover{background:#14507F;}
+  .btn-ghost{background:#fff;color:#33373A;border-color:#D8D8D8;}
+  .btn-ghost:hover{background:#F3F3F3;}
+  .btn svg{width:15px;height:15px;}
+  .select{height:36px;padding:0 30px 0 12px;border:1px solid #D8D8D8;background:#fff;border-radius:8px;font-size:12.5px;color:#33373A;display:inline-flex;align-items:center;cursor:default;position:relative;}
+  .select::after{content:"";position:absolute;right:11px;top:50%;width:7px;height:7px;border-right:1.5px solid #888;border-bottom:1.5px solid #888;transform:translateY(-65%) rotate(45deg);}
+
+  .table-wrap{margin:0 22px;background:#fff;border:1px solid #E5E5E5;border-radius:10px;overflow:hidden;flex:1;min-height:0;display:flex;flex-direction:column;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{text-align:left;font-weight:600;color:#6B7075;font-size:12px;padding:11px 16px;background:#FBFBFB;border-bottom:1px solid #ECECEC;letter-spacing:.3px;}
+  tbody td{padding:11px 16px;border-bottom:1px solid #F1F1F1;color:#2B2B2B;}
+  tbody tr:last-child td{border-bottom:none;}
+  tbody tr:hover{background:#FAFBFC;}
+  .code{font-family:"Cascadia Code","Consolas",monospace;color:#5A6066;font-size:12.5px;}
+  .weight{display:inline-block;min-width:30px;text-align:center;background:#EFF1F3;color:#444;border-radius:5px;padding:2px 7px;font-size:12px;font-weight:600;}
+  .tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;background:#EAF0F6;color:#2E5E8C;}
+  .ops{display:flex;gap:8px;}
+  .op{color:#5A6066;cursor:default;font-size:12.5px;display:inline-flex;align-items:center;gap:4px;}
+  .op:hover{color:#185FA5;}
+  .op.del:hover{color:#C42B1C;}
+  .op svg{width:14px;height:14px;}
+  tr.conflict{background:#FFF7E6;}
+  tr.conflict:hover{background:#FCEFCF;}
+  .cbadge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:#B26A00;background:#FDEFD3;border:1px solid #F2D69A;padding:2px 8px;border-radius:20px;}
+  .cbadge svg{width:12px;height:12px;}
+
+  .statusbar{height:34px;flex:0 0 34px;display:flex;align-items:center;gap:16px;padding:0 24px;font-size:11.5px;color:#7A7F85;border-top:1px solid #E5E5E5;background:#FAFAFA;}
+  .statusbar .save{margin-left:auto;display:inline-flex;align-items:center;gap:6px;color:#9A9A9A;}
+</style>
+</head>
+<body>
+<div class="window">
+  <div class="titlebar">
+    <div class="brand">
+      <div class="logo">R</div>
+      <span class="title">RIME 配置小工具</span>
+      <span class="ver">v0.2.0</span>
+    </div>
+    <div class="win-controls">
+      <div class="wc"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><line x1="2" y1="6" x2="10" y2="6"/></svg></div>
+      <div class="wc close"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 2l8 8M10 2l-8 8"/></svg></div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="sidebar">
+      <div class="nav-label">管理</div>
+      <div class="nav active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 6h16M4 12h16M4 18h10"/></svg>词库管理
+      </div>
+      <div class="nav">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8" cy="8" r="3"/><circle cx="16" cy="16" r="3"/><path d="M11 8h6M8 11v6"/></svg>符号表
+      </div>
+      <div class="nav">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16M9 9v11"/></svg>方案配置
+      </div>
+      <div class="nav-label">系统</div>
+      <div class="nav">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>设置
+      </div>
+      <div class="side-foot"><span class="dot"></span>已连接 Rime 目录</div>
+    </div>
+    <div class="content">
+      <div class="page-head">
+        <div>
+          <div class="ph-title">词库管理</div>
+          <div class="ph-sub">custom_phrase.txt · 共 1,248 条</div>
+        </div>
+        <span class="pill"><span class="dot"></span>已连接 · 自动部署开</span>
+      </div>
+      <div class="toolbar">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="21" y2="21"/></svg>
+          <input placeholder="搜索汉字、拼音或分组…">
+        </div>
+        <button class="btn btn-primary"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>新增</button>
+        <div class="select">分组：全部</div>
+        <div class="select">排序：权重</div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>汉字</th><th>拼音</th><th>权重</th><th>分组</th><th>操作</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>银行</td><td class="code">yinhang</td><td><span class="weight">100</span></td><td><span class="tag">工作</span></td>
+              <td><div class="ops"><span class="op"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20h4L18 10l-4-4L4 16v4z"/></svg>编辑</span><span class="op del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>删除</span></div></td>
+            </tr>
+            <tr class="conflict">
+              <td>武汉</td><td class="code">wh</td><td><span class="weight">80</span></td><td><span class="tag">地名</span></td>
+              <td><div class="ops"><span class="cbadge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l9 16H3z"/><line x1="12" y1="10" x2="12" y2="14"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>编码冲突</span></div></td>
+            </tr>
+            <tr class="conflict">
+              <td>午后</td><td class="code">wh</td><td><span class="weight">40</span></td><td><span class="tag">时间</span></td>
+              <td><div class="ops"><span class="cbadge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l9 16H3z"/><line x1="12" y1="10" x2="12" y2="14"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>编码冲突</span></div></td>
+            </tr>
+            <tr>
+              <td>长江</td><td class="code">changjiang</td><td><span class="weight">60</span></td><td><span class="tag">地名</span></td>
+              <td><div class="ops"><span class="op"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20h4L18 10l-4-4L4 16v4z"/></svg>编辑</span><span class="op del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>删除</span></div></td>
+            </tr>
+            <tr>
+              <td>微信</td><td class="code">weixin</td><td><span class="weight">70</span></td><td><span class="tag">工作</span></td>
+              <td><div class="ops"><span class="op"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20h4L18 10l-4-4L4 16v4z"/></svg>编辑</span><span class="op del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>删除</span></div></td>
+            </tr>
+            <tr>
+              <td>谢谢</td><td class="code">xiexie</td><td><span class="weight">30</span></td><td><span class="tag">生活</span></td>
+              <td><div class="ops"><span class="op"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20h4L18 10l-4-4L4 16v4z"/></svg>编辑</span><span class="op del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>删除</span></div></td>
+            </tr>
+            <tr>
+              <td>你好</td><td class="code">nihao</td><td><span class="weight">50</span></td><td><span class="tag">生活</span></td>
+              <td><div class="ops"><span class="op"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 20h4L18 10l-4-4L4 16v4z"/></svg>编辑</span><span class="op del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg>删除</span></div></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="statusbar">
+        <span>共 1,248 条</span><span>冲突 3 条</span><span>分组 6 个</span>
+        <span class="save"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 4h11l3 3v13H5z"/><path d="M8 4v5h7"/></svg>已保存</span>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
