@@ -17,6 +17,7 @@ class PinyinDisplayStore:
         self.path = Path(rime_dir) / DISPLAY_INI_FILENAME
         self._pinyin = pinyin
         self._values: dict[str, tuple[str, str, str]] = {}
+        self._inferred: dict[str, str] = {}
         self.load()
 
     @staticmethod
@@ -26,6 +27,7 @@ class PinyinDisplayStore:
 
     def load(self) -> None:
         self._values = {}
+        self._inferred = {}
         if not self.path.is_file():
             return
         parser = configparser.ConfigParser(interpolation=None)
@@ -38,15 +40,19 @@ class PinyinDisplayStore:
                 self._values[self._id(text, code)] = (text, raw_code(code), display)
 
     def display_for(self, phrase: Phrase) -> str:
-        saved = self._values.get(self._id(phrase.text, phrase.code))
+        key = self._id(phrase.text, phrase.code)
+        saved = self._values.get(key)
         if saved:
             return saved[2]
-        return infer_display_code(phrase.text, phrase.code, self._pinyin)
+        if key not in self._inferred:
+            self._inferred[key] = infer_display_code(phrase.text, phrase.code, self._pinyin)
+        return self._inferred[key]
 
     def set(self, text: str, code: str, display: str) -> None:
         normalized = normalize_display_code(display)
         stored = raw_code(code)
         key = self._id(text, stored)
+        self._inferred.pop(key, None)
         if normalized and raw_code(normalized) == stored and normalized != stored:
             self._values[key] = (text, stored, normalized)
         else:
@@ -55,6 +61,7 @@ class PinyinDisplayStore:
     def prune(self, phrases: list[Phrase]) -> None:
         valid = {self._id(p.text, p.code) for p in phrases}
         self._values = {key: value for key, value in self._values.items() if key in valid}
+        self._inferred = {key: value for key, value in self._inferred.items() if key in valid}
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

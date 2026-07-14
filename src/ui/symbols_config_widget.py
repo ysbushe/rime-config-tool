@@ -45,8 +45,9 @@ class SymbolsConfigWidget(QWidget):
         self._deploy = deploy
         self._current_category = ""
         self._dirty = False
+        self._categories_signature: tuple[str, ...] = ()
         self._build_ui()
-        self.refresh_categories()
+        self.refresh_categories(force=True)
 
     # ------------------------------------------------------------------ #
     def _build_ui(self) -> None:
@@ -102,12 +103,23 @@ class SymbolsConfigWidget(QWidget):
         root.addLayout(right, 2)
 
     # ------------------------------------------------------------------ #
-    def refresh_categories(self) -> None:
-        self._cats.clear()
-        for c in self._repo.categories():
-            self._cats.addItem(c)
-        if self._cats.count() > 0:
-            self._cats.setCurrentRow(0)
+    def refresh_categories(self, force: bool = False) -> None:
+        categories = tuple(self._repo.categories())
+        if not force and categories == self._categories_signature:
+            return
+        previous = self._current_category
+        self._cats.blockSignals(True)
+        try:
+            self._cats.clear()
+            for category in categories:
+                self._cats.addItem(category)
+            if categories:
+                self._cats.setCurrentRow(categories.index(previous) if previous in categories else 0)
+        finally:
+            self._cats.blockSignals(False)
+        self._categories_signature = categories
+        if self._cats.currentItem() is not None:
+            self._on_category_changed(self._cats.currentItem(), None)
 
     def _on_category_changed(self, current: QListWidgetItem, _prev) -> None:
         if current is None:
@@ -117,24 +129,28 @@ class SymbolsConfigWidget(QWidget):
         self._refresh_symbols()
 
     def _refresh_symbols(self) -> None:
-        self._table.setRowCount(0)
-        if not self._current_category:
-            return
-        for sym in self._repo.get_symbols(self._current_category):
-            row = self._table.rowCount()
-            self._table.insertRow(row)
-            self._table.setItem(row, 0, QTableWidgetItem(sym))
-            btn = QPushButton("删除")
-            btn.setObjectName("Danger")
-            btn.clicked.connect(lambda _=False, s=sym: self._on_del_symbol(s))
-            self._table.setCellWidget(row, 1, btn)
+        symbols = self._repo.get_symbols(self._current_category) if self._current_category else []
+        # QTableWidget creates a real button per symbol.  Preallocating rows
+        # while painting is paused avoids a layout pass for every insertion.
+        self._table.setUpdatesEnabled(False)
+        try:
+            self._table.clearContents()
+            self._table.setRowCount(len(symbols))
+            for row, sym in enumerate(symbols):
+                self._table.setItem(row, 0, QTableWidgetItem(sym))
+                btn = QPushButton("删除")
+                btn.setObjectName("Danger")
+                btn.clicked.connect(lambda _=False, s=sym: self._on_del_symbol(s))
+                self._table.setCellWidget(row, 1, btn)
+        finally:
+            self._table.setUpdatesEnabled(True)
 
     # ------------------------------------------------------------------ #
     def _on_add_category(self) -> None:
         name, ok = QInputDialog.getText(self, "新建分类", "分类键（如 /fh）：")
         if ok and name.strip():
             self._repo.add_category(name.strip())
-            self.refresh_categories()
+            self.refresh_categories(force=True)
 
     def _on_del_category(self) -> None:
         if not self._current_category:
@@ -146,7 +162,7 @@ class SymbolsConfigWidget(QWidget):
         ):
             return
         self._repo.remove_category(self._current_category)
-        self.refresh_categories()
+        self.refresh_categories(force=True)
 
     def _on_add_symbol(self) -> None:
         if not self._current_category:

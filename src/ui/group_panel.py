@@ -97,9 +97,9 @@ class GroupPanel(QWidget):
         self._group_buttons: dict[str, QPushButton] = {}
 
         actions = QHBoxLayout()
-        self._btn_add = QPushButton("+ 新建")
+        self._btn_add = QPushButton("新建分组")
         self._btn_add.clicked.connect(self._on_add)
-        self._btn_del = QPushButton("删除")
+        self._btn_del = QPushButton("删除分组")
         self._btn_del.setObjectName("Danger")
         self._btn_del.clicked.connect(self._on_delete)
         actions.addWidget(self._btn_add)

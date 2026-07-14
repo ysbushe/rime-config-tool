@@ -3,7 +3,7 @@
 覆盖：
     - apply_theme 三主题均能把模板占位符替换完（无 @XXX@ 残留）
     - 模板所用占位符均在 THEME_TOKENS 有定义
-    - THEME_TOKENS 三套各含 28 令牌，A/B 的 @SEAL@ 为 ""
+    - THEME_TOKENS 三套各含 33 令牌，A/B 的 @SEAL@ 为 ""
     - conflict_background() / accent_color() 返回当前主题值
     - ink 装饰在 ink 时显示、非 ink 隐藏
 """
@@ -32,13 +32,15 @@ _ALL_TOKENS = [
     "@CONFLICT_BG@", "@CONFLICT_BORDER@", "@CONFLICT_TEXT@", "@SEAL@",
     "@SELECTION_BG@", "@SELECTION_TEXT@", "@TITLEBAR_BG@", "@TITLEBAR_TEXT@",
     "@FONT_UI@", "@FONT_HEADING@", "@FONT_MONO@",
+    "@INFO_TEXT@", "@WARNING_TEXT@", "@ERROR_TEXT@", "@NEUTRAL_TEXT@",
+    "@DUPLICATE_TEXT@",
 ]
 
 
 def test_theme_tokens_count_and_seal() -> None:
     assert set(THEME_TOKENS.keys()) == {"light", "dark", "ink"}
     for name, tokens in THEME_TOKENS.items():
-        assert len(tokens) == 28, f"{name} 应有 28 个令牌，实际 {len(tokens)}"
+        assert len(tokens) == 33, f"{name} 应有 33 个令牌，实际 {len(tokens)}"
         for tk in _ALL_TOKENS:
             assert tk in tokens, f"{name} 缺少令牌 {tk}"
         # A/B 的印章令牌为空；C 为朱砂

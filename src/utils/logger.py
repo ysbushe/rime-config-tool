@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 from pathlib import Path
 from typing import Optional
@@ -27,7 +28,9 @@ def _shared_file_handler() -> Optional[logging.Handler]:
 
         log_path: Path = app_log_path()
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(log_path, encoding="utf-8")
+        fh = RotatingFileHandler(
+            log_path, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+        )
         fh.setFormatter(logging.Formatter(_DEFAULT_FORMAT, _DEFAULT_DATEFMT))
         fh.setLevel(logging.INFO)
         _file_handler = fh

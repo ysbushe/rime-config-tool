@@ -187,3 +187,15 @@ def test_sandbox_disables_tray_deploy(qapp, app_context) -> None:
     mw._update_tray_deploy()
     # 部署器在测试环境可能不可用，但沙盒标签必须移除
     assert "沙盒" not in mw._tray.action_deploy.text()
+
+
+def test_result_toast_separates_phrase_and_codes(qapp) -> None:
+    from src.ui.toast_notification import ToastNotification
+
+    toast = ToastNotification()
+    toast.show_result(True, "已收藏「银行」：yin'hang、yh。")
+
+    assert toast._detail.isVisible()
+    assert toast._detail_text.text() == "「银行」"
+    assert "yin'hang" in toast._detail_codes.text()
+    assert toast._detail_codes.wordWrap() is True

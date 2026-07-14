@@ -1,7 +1,7 @@
 """系统托盘（TrayIcon）。
 
 基于 PySide6 内置 QSystemTrayIcon，常驻菜单：
-    打开主窗口 / 一键部署 / 热键收藏：开|关 / 设置 / 退出
+    打开主窗口 / 立即重新部署 / 保存后自动部署 / 热键收藏 / 设置 / 退出
 （不引入 pystray，遵循既定技术栈决策。）
 """
 from __future__ import annotations
@@ -29,7 +29,9 @@ class TrayIcon(QSystemTrayIcon):
         menu = QMenu()
 
         self._act_open = menu.addAction("打开主窗口")
-        self._act_deploy = menu.addAction("一键部署")
+        self._act_deploy = menu.addAction("立即重新部署")
+        self._act_auto_deploy = menu.addAction("保存后自动部署")
+        self._act_auto_deploy.setCheckable(True)
         self._act_hotkey = menu.addAction("热键收藏：开")
         self._act_hotkey.setCheckable(True)
         self._act_hotkey.setChecked(True)
@@ -65,6 +67,10 @@ class TrayIcon(QSystemTrayIcon):
         return self._act_deploy
 
     @property
+    def action_auto_deploy(self):
+        return self._act_auto_deploy
+
+    @property
     def action_hotkey(self):
         return self._act_hotkey
 
@@ -75,3 +81,6 @@ class TrayIcon(QSystemTrayIcon):
     @property
     def action_quit(self):
         return self._act_quit
+
+    def set_auto_deploy_state(self, enabled: bool) -> None:
+        self._act_auto_deploy.setChecked(enabled)

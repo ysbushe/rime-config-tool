@@ -360,19 +360,166 @@ QLabel#BlockTitle {
 }
 
 /* ---------- 语义化标签（错误 / 信息 / 静音信息） ---------- */
-*[role="error"] {
-    color: @CONFLICT_TEXT@;
-}
-
 *[role="success"] {
     color: @SUCCESS_TEXT@;
 }
 
 *[role="info"] {
-    color: @TEXT_MUTED@;
+    color: @INFO_TEXT@;
+}
+
+*[role="warning"] {
+    color: @WARNING_TEXT@;
+}
+
+*[role="error"] {
+    color: @ERROR_TEXT@;
+}
+
+*[role="duplicate"] {
+    color: @DUPLICATE_TEXT@;
+}
+
+*[role="neutral"] {
+    color: @NEUTRAL_TEXT@;
 }
 
 QLabel#MutedVersion {
     color: @TEXT_MUTED@;
+    font-size: 12px;
+}
+
+
+/* ---------- 设置页主题卡片 ---------- */
+QWidget#ThemeSelector {
+    background: transparent;
+}
+
+QFrame#ThemeCard {
+    background-color: @BG_ELEVATED@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+}
+
+QFrame#ThemeCard:hover {
+    border-color: @ACCENT_HOVER@;
+}
+
+QFrame#ThemeCard[selected="true"] {
+    background-color: @ACCENT_SOFT@;
+    border: 2px solid @ACCENT@;
+}
+
+QLabel#ThemeCardTitle {
+    color: @TEXT_PRIMARY@;
+    font-weight: bold;
+}
+
+QLabel#ThemeCardDesc {
+    color: @TEXT_SECONDARY@;
+    font-size: 12px;
+}
+
+QLabel#ThemeCardCheck {
+    background-color: @ACCENT@;
+    border-radius: 10px;
+    color: @ON_ACCENT@;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+
+/* ---------- 编码建议列表 ---------- */
+QFrame#EncodingSuggestion {
+    background-color: @BG_ELEVATED@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+}
+
+QFrame#EncodingSuggestion:hover, QFrame#EncodingSuggestion[selected="true"] {
+    border-color: @ACCENT@;
+    background-color: @ACCENT_SOFT@;
+}
+
+QLabel#SuggestionName {
+    color: @TEXT_SECONDARY@;
+    font-weight: bold;
+    min-width: 72px;
+}
+
+QLabel#SuggestionCode {
+    color: @ACCENT@;
+    font-family: @FONT_MONO@;
+}
+
+QLabel#SuggestionState {
+    font-weight: bold;
+    min-width: 58px;
+}
+
+
+QPushButton#SuggestionAdd {
+    min-width: 52px;
+    min-height: 26px;
+    padding: 3px 8px;
+    border-radius: 5px;
+    color: @ACCENT@;
+}
+
+QFrame#ResultToast {
+    background-color: @BG_ELEVATED@;
+    border: 1px solid @BORDER_STRONG@;
+    border-left: 4px solid @ACCENT@;
+    border-radius: 6px;
+}
+
+QFrame#ResultToast[role="success"] { border-left-color: @SUCCESS_TEXT@; }
+QFrame#ResultToast[role="error"] { border-left-color: @ERROR_TEXT@; }
+QLabel#ResultToastTitle { font-weight: bold; color: @TEXT_PRIMARY@; }
+QLabel#ResultToastMessage { color: @TEXT_SECONDARY@; }
+
+
+QLabel#ExtraCodeName {
+    min-width: 46px;
+    color: @TEXT_SECONDARY@;
+    font-weight: bold;
+}
+
+QPushButton#ToastClose {
+    border: none;
+    background: transparent;
+    color: @TEXT_MUTED@;
+    font-size: 18px;
+    padding: 0;
+}
+
+QPushButton#ToastClose:hover { color: @TEXT_PRIMARY@; }
+
+
+QLabel#DeleteCode { font-family: @FONT_MONO@; color: @TEXT_PRIMARY@; }
+QLabel#DeleteWeight { min-width: 42px; color: @TEXT_SECONDARY@; }
+QLabel#ToastPhrase { color: @TEXT_PRIMARY@; font-weight: bold; }
+QLabel#ToastCodes { color: @ACCENT@; font-family: @FONT_MONO@; }
+
+/* ---------- Rime 实时候选预览 ---------- */
+QWidget#RimePreviewPanel {
+    background: @ACCENT_SOFT@;
+    border-top: 1px solid @BORDER_STRONG@;
+    border-bottom: 1px solid @BORDER_STRONG@;
+    border-radius: 4px;
+}
+QLabel#RimePreviewStatus, QLabel#RimePreviewCandidate {
+    color: @TEXT_PRIMARY@;
+    font-size: 15px;
+    font-weight: 600;
+}
+QLabel#RimePreviewWeight, QLabel#RimePreviewWeightTitle {
+    color: @ACCENT@;
+    font-family: @FONT_MONO@;
+    font-size: 13px;
+    font-weight: bold;
+}
+QLabel#RimePreviewDetails {
+    color: @NEUTRAL_TEXT@;
     font-size: 12px;
 }

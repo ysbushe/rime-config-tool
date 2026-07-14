@@ -5,6 +5,7 @@ import ctypes
 import ctypes.wintypes  # 显式导入子模块，否则打包后 ctypes.wintypes 不可用
 import os
 import time
+from pathlib import Path
 from typing import Callable, Optional
 
 from src.utils.logger import get_logger
@@ -32,10 +33,16 @@ user32 = ctypes.windll.user32
 
 
 def _is_internal_workdir_text(text: str) -> bool:
-    value = (text or "").strip().strip('"')
+    """Reject the app directory regardless of how the shell copied it."""
+    value = (text or "").strip().strip("'\"").strip()
     if not value or "\n" in value or "\r" in value:
         return False
-    return os.path.normcase(os.path.abspath(value)) == os.path.normcase(os.getcwd())
+    candidate = os.path.normcase(os.path.normpath(os.path.abspath(value)))
+    roots = (os.getcwd(), str(Path(__file__).resolve().parents[3]))
+    return any(
+        candidate == os.path.normcase(os.path.normpath(os.path.abspath(root)))
+        for root in roots
+    )
 
 
 class GUITHREADINFO(ctypes.Structure):

@@ -325,3 +325,4 @@ def test_keyboard_capture_times_out_when_source_slow(keyboard_backend_patched, m
 
     assert result == "", "源慢于 0.45s 时应超时回退空串（已知限制，非 bug）"
     assert recorded and recorded[-1] == saved, "即使超时也应恢复原始剪贴板"
+

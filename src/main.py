@@ -22,8 +22,20 @@ logger = get_logger(__name__)
 
 
 def main() -> int:
+    if "--rime-preview-host" in sys.argv:
+        from src.service.rime_preview_host import run
+        return run()
     from PySide6.QtWidgets import QApplication
 
+    from src.service.single_instance import SingleInstanceGuard
+    from src.service.windows_notifications import configure_windows_notification_identity
+
+    instance_guard = SingleInstanceGuard()
+    if not instance_guard.acquire():
+        logger.info("已有 RIME 配置小工具实例正在运行，忽略重复启动。")
+        return 0
+
+    configure_windows_notification_identity()
     app = QApplication(sys.argv)
     app.setApplicationName("RIME 配置小工具")
     app.setQuitOnLastWindowClosed(False)  # 关闭窗口仅最小化到托盘
@@ -40,7 +52,10 @@ def main() -> int:
     window.show()
 
     logger.info("应用已启动（托盘常驻）。")
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        instance_guard.release()
 
 
 if __name__ == "__main__":

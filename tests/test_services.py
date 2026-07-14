@@ -130,3 +130,9 @@ def test_fieldmap_default_loaded_from_json() -> None:
     assert "traditionalization" in fm.switch_names
     assert "search_single_char" in fm.switch_names
     assert fm.custom_phrase_ref == "table_translator@custom_phrase"
+
+
+def test_update_version_comparison_is_numeric() -> None:
+    from src.service.update_service import _version_tuple
+
+    assert _version_tuple("v1.10.0") > _version_tuple("1.9.9")

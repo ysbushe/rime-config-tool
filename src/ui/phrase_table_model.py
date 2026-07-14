@@ -92,7 +92,7 @@ class PhraseTableModel(QAbstractTableModel):
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
         col = index.column()
         f = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
-        if col in (COL_TEXT, COL_CODE, COL_WEIGHT):
+        if col == COL_WEIGHT:
             f |= Qt.ItemFlag.ItemIsEditable
         if col == COL_SELECT:
             f |= Qt.ItemFlag.ItemIsUserCheckable
@@ -165,6 +165,45 @@ class PhraseTableModel(QAbstractTableModel):
             self._checked[k] = state
         last = self.rowCount() - 1
         if last >= 0:
+            self.dataChanged.emit(
+                self.index(0, COL_SELECT), self.index(last, COL_SELECT),
+                [Qt.ItemDataRole.CheckStateRole])
+
+    def set_checked_keys(self, keys: set[str]) -> None:
+        """让批量模式的行选择和复选框共享同一份状态。"""
+        changed = False
+        for key in self._checked:
+            state = key in keys
+            if self._checked[key] != state:
+                self._checked[key] = state
+                changed = True
+        last = self.rowCount() - 1
+        if changed and last >= 0:
+            self.dataChanged.emit(
+                self.index(0, COL_SELECT), self.index(last, COL_SELECT),
+                [Qt.ItemDataRole.CheckStateRole])
+
+    def toggle_checked_at(self, row: int) -> bool:
+        """切换一行的批量状态，并请求立即重绘该行的自绘对勾。"""
+        phrase = self.phrase_at_row(row)
+        if phrase is None:
+            return False
+        self._checked[phrase.key] = not self._checked.get(phrase.key, False)
+        index = self.index(row, COL_SELECT)
+        self.dataChanged.emit(index, index, [Qt.ItemDataRole.CheckStateRole])
+        self.selectionChanged.emit(phrase.key, self._checked[phrase.key])
+        return self._checked[phrase.key]
+
+    def check_rows(self, rows: list[int]) -> None:
+        """拖拽框选经过的行只增加勾选，不意外清空既有选择。"""
+        changed = False
+        for row in rows:
+            phrase = self.phrase_at_row(row)
+            if phrase is not None and not self._checked.get(phrase.key, False):
+                self._checked[phrase.key] = True
+                changed = True
+        last = self.rowCount() - 1
+        if changed and last >= 0:
             self.dataChanged.emit(
                 self.index(0, COL_SELECT), self.index(last, COL_SELECT),
                 [Qt.ItemDataRole.CheckStateRole])

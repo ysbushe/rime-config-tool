@@ -26,7 +26,11 @@ _DEFAULTS: Dict[str, Any] = {
     "hotkey_enabled": True,  # 全局热键收藏开关
     "hotkey_combo": "Ctrl+Alt+Q",  # 默认热键组合
     "autostart": False,      # 开机自启
-    "backup_count": 5,       # 备份保留份数
+    "backup_count": 2,       # 备份保留份数
+    "scheduled_backup_enabled": False,
+    "backup_interval_days": 7,
+    "backup_auto_cleanup": True,
+    "last_backup_at": "",
     "backup_dir": "",       # 自定义备份目录；空值使用 Rime/.backup
     "theme": "light",        # 主题（风格 A 浅色）
     "sandbox_mode": False,   # 沙盒预览模式：操作副本，不碰真实 Rime 配置
@@ -191,9 +195,9 @@ class Settings:
     @property
     def backup_count(self) -> int:
         try:
-            return max(1, int(self._data.get("backup_count", 5)))
+            return max(1, int(self._data.get("backup_count", 2)))
         except (TypeError, ValueError):
-            return 5
+            return 2
 
     @backup_count.setter
     def backup_count(self, value: int) -> None:
@@ -208,6 +212,40 @@ class Settings:
         self.set("backup_dir", str(value))
 
 
+    @property
+    def scheduled_backup_enabled(self) -> bool:
+        return bool(self._data.get("scheduled_backup_enabled", False))
+
+    @scheduled_backup_enabled.setter
+    def scheduled_backup_enabled(self, value: bool) -> None:
+        self.set("scheduled_backup_enabled", bool(value))
+
+    @property
+    def backup_interval_days(self) -> int:
+        try:
+            return max(1, min(365, int(self._data.get("backup_interval_days", 7))))
+        except (TypeError, ValueError):
+            return 7
+
+    @backup_interval_days.setter
+    def backup_interval_days(self, value: int) -> None:
+        self.set("backup_interval_days", max(1, min(365, int(value))))
+
+    @property
+    def backup_auto_cleanup(self) -> bool:
+        return bool(self._data.get("backup_auto_cleanup", True))
+
+    @backup_auto_cleanup.setter
+    def backup_auto_cleanup(self, value: bool) -> None:
+        self.set("backup_auto_cleanup", bool(value))
+
+    @property
+    def last_backup_at(self) -> str:
+        return str(self._data.get("last_backup_at", ""))
+
+    @last_backup_at.setter
+    def last_backup_at(self, value: str) -> None:
+        self.set("last_backup_at", str(value))
     @property
     def theme(self) -> str:
         return str(self._data.get("theme", "light"))

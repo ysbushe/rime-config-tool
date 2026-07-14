@@ -12,6 +12,7 @@ from typing import Optional
 
 from src import __version__
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -29,6 +30,7 @@ from src.ui.settings_widget import SettingsWidget
 from src.ui.symbols_config_widget import SymbolsConfigWidget
 from src.ui.theme import apply_theme, apply_window_theme, set_ink_decor
 from src.ui.tray_icon import TrayIcon
+from src.ui.toast_notification import ToastNotification
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -54,12 +56,18 @@ class MainWindow(QMainWindow):
         self._build_tray()
         self._wire_hotkey()
         self._wire_autostart()
+        self._scheduled_backup_timer = QTimer(self)
+        self._scheduled_backup_timer.timeout.connect(self._run_scheduled_backup)
+        self._scheduled_backup_timer.start(60 * 60 * 1000)
+        self._run_scheduled_backup()
 
         # 应用当前主题（作用于 QApplication，弹窗自动继承）
         self._update_tray_deploy()
 
         self._select_tab(0)
         self._check_rime_dir()
+        # Warm the isolated engine after the window is visible; never delay startup.
+        QTimer.singleShot(650, self._ctx.rime_preview_service.warm_up_async)
 
     # ------------------------------------------------------------------ #
     # 样式
@@ -179,6 +187,7 @@ class MainWindow(QMainWindow):
         self._phrase_manager = PhraseManager(
             ctx.phrase_repo, ctx.group_service, ctx.backup_service,
             ctx.settings, ctx.deploy_service, ctx.pinyin_service,
+            ctx.system_dictionary_index, ctx.rime_preview_service,
         )
         self._symbols_widget = SymbolsConfigWidget(
             ctx.symbols_repo, ctx.backup_service, ctx.settings, ctx.deploy_service,
@@ -192,6 +201,8 @@ class MainWindow(QMainWindow):
         self._settings_widget.hotkeyComboChanged.connect(self._on_hotkey_combo_changed)
         self._settings_widget.sandboxToggled.connect(self._on_sandbox_toggled)
         self._settings_widget.themeChanged.connect(self._on_theme_changed)
+        self._phrase_manager.favoriteCompleted.connect(self._on_favorite_completed)
+        self._phrase_manager.editCompleted.connect(self._on_edit_completed)
 
         self._tabs.addTab(self._phrase_manager, _TABS[0])
         self._tabs.addTab(self._symbols_widget, _TABS[1])
@@ -210,10 +221,12 @@ class MainWindow(QMainWindow):
         self._tray.action_open.triggered.connect(self.show_main)
         self._tray.requestOpen.connect(self.show_main)
         self._tray.action_deploy.triggered.connect(self.deploy_now)
+        self._tray.action_auto_deploy.triggered.connect(self._toggle_auto_deploy_from_tray)
         self._tray.action_hotkey.triggered.connect(self._toggle_hotkey_from_tray)
-        self._tray.action_settings.triggered.connect(lambda: self._select_tab(2))
+        self._tray.action_settings.triggered.connect(self._open_settings_from_tray)
         self._tray.action_quit.triggered.connect(self.quit_app)
         self._tray.set_hotkey_state(self._ctx.settings.hotkey_enabled)
+        self._tray.set_auto_deploy_state(self._ctx.settings.auto_deploy)
         self._tray.show()
 
     # ------------------------------------------------------------------ #
@@ -254,6 +267,20 @@ class MainWindow(QMainWindow):
         self.show_main()
         self._phrase_manager.open_quick_add(captured, notice=notice)
 
+    def _show_result_bubble(self, ok: bool, message: str) -> None:
+        icon = (QSystemTrayIcon.MessageIcon.Information if ok
+                else QSystemTrayIcon.MessageIcon.Warning)
+        self._tray.showMessage("RIME 配置小工具", message, icon, 5000)
+        if not hasattr(self, "_result_toast"):
+            self._result_toast = ToastNotification(self)
+        self._result_toast.show_result(ok, message)
+
+    def _on_favorite_completed(self, ok: bool, message: str) -> None:
+        self._show_result_bubble(ok, message)
+
+    def _on_edit_completed(self, ok: bool, message: str) -> None:
+        self._show_result_bubble(ok, message)
+
     def _toggle_hotkey_from_tray(self) -> None:
         enabled = not self._ctx.settings.hotkey_enabled
         self._ctx.settings.hotkey_enabled = enabled
@@ -263,6 +290,15 @@ class MainWindow(QMainWindow):
             self._ctx.hotkey_manager.unregister()
         self._tray.set_hotkey_state(enabled)
         self._settings_widget.refresh()
+
+    def _toggle_auto_deploy_from_tray(self, enabled: bool) -> None:
+        self._ctx.settings.auto_deploy = bool(enabled)
+        self._tray.set_auto_deploy_state(bool(enabled))
+        self._settings_widget.refresh()
+
+    def _open_settings_from_tray(self) -> None:
+        self.show_main()
+        self._select_tab(2)
 
     def _on_hotkey_toggled(self, enabled: bool) -> None:
         if enabled:
@@ -309,6 +345,24 @@ class MainWindow(QMainWindow):
             applied_combo=old_combo,
         )
 
+    def _run_scheduled_backup(self) -> None:
+        """Run at startup and hourly; only copy files when the configured interval is due."""
+        settings = self._ctx.settings
+        if not bool(getattr(settings, "scheduled_backup_enabled", False)):
+            return
+        from datetime import datetime, timedelta
+        try:
+            last = datetime.fromisoformat(str(getattr(settings, "last_backup_at", "")))
+        except (TypeError, ValueError):
+            last = None
+        interval = max(1, min(365, int(getattr(settings, "backup_interval_days", 7))))
+        if last is not None and datetime.now() - last < timedelta(days=interval):
+            return
+        try:
+            self._settings_widget.perform_managed_backup(scheduled=True)
+        except Exception as exc:
+            logger.warning("定期备份失败：%s", exc)
+
     # ------------------------------------------------------------------ #
     # 自启
     # ------------------------------------------------------------------ #
@@ -322,7 +376,8 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     def _on_tab_changed(self, index: int) -> None:
         if index == 0:
-            self._phrase_manager.refresh()
+            # Phrase mutations refresh themselves; avoid a redundant full table pass on tab activation.
+            return
         elif index == 1:
             self._symbols_widget.refresh_categories()
         elif index == 2:
@@ -349,21 +404,23 @@ class MainWindow(QMainWindow):
     def deploy_now(self) -> None:
         ok, msg = self._ctx.deploy_service.deploy()
         if ok:
+            self._ctx.rime_preview_service.invalidate_after_deploy()
             QMessageBox.information(self, "部署", msg)
         else:
             QMessageBox.warning(self, "部署", msg)
 
     def _update_tray_deploy(self) -> None:
-        """同步托盘『一键部署』的可用状态与文案（沙盒/部署器不可用则禁用）。"""
+        """同步托盘手动部署动作的可用状态与文案。"""
         if not hasattr(self, "_tray"):
             return
         sandbox = self._ctx.settings.sandbox_mode
         available = self._ctx.deploy_service.available and not sandbox
         if sandbox:
-            self._tray.action_deploy.setText("一键部署（沙盒禁用）")
+            self._tray.action_deploy.setText("立即重新部署（沙盒禁用）")
         else:
-            self._tray.action_deploy.setText("一键部署")
+            self._tray.action_deploy.setText("立即重新部署")
         self._tray.action_deploy.setEnabled(available)
+        self._tray.set_auto_deploy_state(self._ctx.settings.auto_deploy)
 
     def _on_theme_changed(self, theme: str) -> None:
         """主题切换：持久化 + 即时应用（仅重设样式，不重建业务对象/不丢表单）。"""
@@ -386,6 +443,8 @@ class MainWindow(QMainWindow):
             self._ctx.phrase_repo,
             self._ctx.group_service,
             self._ctx.backup_service,
+            self._ctx.system_dictionary_index,
+            self._ctx.rime_preview_service,
         )
         self._symbols_widget._repo = self._ctx.symbols_repo
         self._settings_widget.set_schema_repo(self._ctx.schema_repo)

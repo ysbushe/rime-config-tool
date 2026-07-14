@@ -42,6 +42,9 @@ def raw_code(code: str) -> str:
 
 
 def build_suggestions(text: str, pinyin: PinyinService) -> list[EncodingSuggestion]:
+    english = _english_suggestions(text)
+    if english:
+        return english
     units = pinyin.get_pinyin_units(text)
     if not units:
         return []
@@ -97,3 +100,23 @@ def infer_display_code(text: str, stored_code: str, pinyin: PinyinService) -> st
 
     matched = split(0, 0)
     return DISPLAY_SEPARATOR.join(matched[1]) if matched else code
+
+
+def _english_suggestions(text: str) -> list[EncodingSuggestion]:
+    """Offer predictable choices for pure English words and phrases."""
+    value = (text or "").strip()
+    if not value or not re.fullmatch(r"[A-Za-z][A-Za-z -]*", value):
+        return []
+    compact = re.sub(r"[ -]+", "", value)
+    options = [
+        EncodingSuggestion("英文小写", compact.lower()),
+        EncodingSuggestion("英文大写", compact.upper()),
+        EncodingSuggestion("原样保留", compact),
+    ]
+    unique: list[EncodingSuggestion] = []
+    seen: set[str] = set()
+    for option in options:
+        if option.display_code not in seen:
+            seen.add(option.display_code)
+            unique.append(option)
+    return unique

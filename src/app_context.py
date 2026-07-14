@@ -19,6 +19,8 @@ from src.service.group_service import GroupService
 from src.service.hotkey_manager import HotkeyManager
 from src.service.pinyin_service import PinyinService
 from src.service.sandbox_service import SandboxService
+from src.service.system_dictionary_index import SystemDictionaryIndex
+from src.service.rime_preview_service import RimePreviewService
 from src.settings import Settings
 from src.utils.logger import get_logger
 
@@ -41,6 +43,8 @@ class AppContext:
     autostart: Autostart
     cache_service: CacheService
     sandbox_service: SandboxService
+    system_dictionary_index: SystemDictionaryIndex
+    rime_preview_service: RimePreviewService
 
     @classmethod
     def build(cls, settings: Optional[Settings] = None) -> "AppContext":
@@ -54,9 +58,13 @@ class AppContext:
         pinyin = PinyinService()
         backup = BackupService(
             rime_dir, keep=settings.backup_count, backup_dir=settings.backup_dir)
+        backup.auto_cleanup = settings.backup_auto_cleanup
         deploy = DeployService(settings)
         autostart = Autostart()
         hotkey = HotkeyManager()
+        system_dictionary_index = SystemDictionaryIndex(rime_dir)
+        system_dictionary_index.ensure_ready_async()
+        rime_preview = RimePreviewService(rime_dir, deploy.deployer_path)
 
         # 目录有效 → 指向真实文件；否则给空仓储（UI 提示设置目录）
         if rime_dir:
@@ -84,6 +92,8 @@ class AppContext:
             autostart=autostart,
             cache_service=cache,
             sandbox_service=sandbox,
+            system_dictionary_index=system_dictionary_index,
+            rime_preview_service=rime_preview,
         )
 
     def rebuild_repos(self) -> None:
@@ -92,8 +102,11 @@ class AppContext:
         cache = self.cache_service
         self.backup_service.rime_dir = rime_dir
         self.backup_service.keep = self.settings.backup_count
+        self.backup_service.auto_cleanup = self.settings.backup_auto_cleanup
         self.backup_service.backup_dir = self.settings.backup_dir
         self.phrase_repo.__init__(f"{rime_dir}/custom_phrase.txt", cache=cache)
         self.schema_repo.__init__(f"{rime_dir}/rime_frost.schema.yaml", cache=cache)
         self.symbols_repo.__init__(f"{rime_dir}/symbols_v.yaml", cache=cache)
         self.group_service.__init__(rime_dir)
+        self.system_dictionary_index.reset(rime_dir)
+        self.rime_preview_service.reset(rime_dir, self.deploy_service.deployer_path)

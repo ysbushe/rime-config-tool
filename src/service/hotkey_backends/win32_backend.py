@@ -12,6 +12,7 @@ import ctypes.wintypes  # 显式导入子模块，否则 ctypes.wintypes 不可�
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Callable, Optional
 
 from PySide6.QtCore import Qt
@@ -49,10 +50,16 @@ user32 = ctypes.windll.user32
 
 
 def _is_internal_workdir_text(text: str) -> bool:
-    value = (text or "").strip().strip('"')
+    """Reject the app directory regardless of how the shell copied it."""
+    value = (text or "").strip().strip("'\"").strip()
     if not value or "\n" in value or "\r" in value:
         return False
-    return os.path.normcase(os.path.abspath(value)) == os.path.normcase(os.getcwd())
+    candidate = os.path.normcase(os.path.normpath(os.path.abspath(value)))
+    roots = (os.getcwd(), str(Path(__file__).resolve().parents[3]))
+    return any(
+        candidate == os.path.normcase(os.path.normpath(os.path.abspath(root)))
+        for root in roots
+    )
 
 def _hwnd_class_name(hwnd: int) -> str:
     if not hwnd:
@@ -300,11 +307,12 @@ class Win32HotkeyBackend:
             #    普通程序偏向 Ctrl+C；终端类窗口优先 Ctrl+Shift+C，避免 Ctrl+C 中断。
             attempts = self._copy_attempts_for(_hwnd_class_name(fg_hwnd), _hwnd_class_name(focus_hwnd))
             attempt_index = 0
-            deadline = time.time() + 0.45
-            next_attempt_at = time.time() + 0.05
+            # SendInput 降级和应用自身复制都可能占去数百毫秒；保留足够窗口。
+            deadline = time.monotonic() + 0.75
+            next_attempt_at = time.monotonic() + 0.05
             release_waited = False
             capture_source = "wm_copy"
-            while time.time() < deadline:
+            while time.monotonic() < deadline:
                 cur = self._get_clipboard()
                 changed = (
                     (probe == sentinel and cur != sentinel)
@@ -320,7 +328,7 @@ class Win32HotkeyBackend:
                         text = cur
                         logger.info("热键取词：捕获来源=%s", capture_source)
                         break
-                if attempt_index < len(attempts) and time.time() >= next_attempt_at:
+                if attempt_index < len(attempts) and time.monotonic() >= next_attempt_at:
                     if not release_waited:
                         self._wait_for_hotkey_release(timeout=0.12)
                         release_waited = True
@@ -329,7 +337,7 @@ class Win32HotkeyBackend:
                     logger.info("热键取词：复制尝试=%s", attempt)
                     self._send_copy_shortcut(attempt)
                     attempt_index += 1
-                    next_attempt_at = time.time() + 0.12
+                    next_attempt_at = time.monotonic() + 0.12
                 time.sleep(0.02)
 
             text = text or ""

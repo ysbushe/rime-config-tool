@@ -10,9 +10,12 @@
 """
 from __future__ import annotations
 
+import queue
+import threading
 from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
 
 from src.service.hotkey_backends.ahk_backend import AhkBackend
 from src.service.hotkey_backends.keyboard_backend import KeyboardBackend
@@ -32,6 +35,29 @@ class HotkeyManager:
         self._callback: Optional[Callable[[str], None]] = None
         self._combo: Optional[str] = None
         self._capture_pending = False
+        self._capture_generation = 0
+        self._capture_results: queue.SimpleQueue[tuple[int, str]] = queue.SimpleQueue()
+        # Keep the poll timer owned by QApplication.  The manager can be
+        # recreated when settings change, while queued capture work may finish
+        # a moment later.
+        self._capture_poll = QTimer(QApplication.instance())
+        self._capture_poll.setInterval(15)
+        self._capture_poll.timeout.connect(self._drain_capture_results)
+
+    def _drain_capture_results(self) -> None:
+        """Deliver worker results from the GUI thread without cross-thread Qt calls."""
+        delivered = False
+        while True:
+            try:
+                generation, text = self._capture_results.get_nowait()
+            except queue.Empty:
+                break
+            if generation == self._capture_generation and self._callback:
+                self._callback(text)
+                delivered = True
+        if delivered or not self._capture_pending:
+            self._capture_pending = False
+            self._capture_poll.stop()
 
     # ------------------------------------------------------------------ #
     @property
@@ -57,6 +83,9 @@ class HotkeyManager:
         return ok
 
     def unregister(self) -> None:
+        self._capture_generation += 1
+        self._capture_pending = False
+        self._capture_poll.stop()
         if self._backend is not None:
             self._backend.unregister()
             self._backend = None
@@ -79,24 +108,20 @@ class HotkeyManager:
     def _make_handler(self) -> Callable[[], None]:
         backend = self._backend
 
-        def run_capture(target=None) -> None:
+        def run_capture(generation: int, target=None) -> None:
             text = ""
             try:
                 logger.info("热键触发：开始取词 backend=%s", backend.name if backend else "none")
                 if backend is not None and hasattr(backend, "capture_selection"):
-                    try:
-                        if target is None:
-                            text = backend.capture_selection()
-                        else:
-                            text = backend.capture_selection(target)
-                    except Exception as exc:
-                        logger.warning("抓取选中文本失败：%s", exc)
-                        text = ""
-                logger.info("热键触发：取词结束 result=%s", "成功" if text else "空")
-                if self._callback:
-                    self._callback(text)
-            finally:
-                self._capture_pending = False
+                    if target is None:
+                        text = backend.capture_selection()
+                    else:
+                        text = backend.capture_selection(target)
+            except Exception as exc:
+                logger.warning("抓取选中文本失败：%s", exc)
+                text = ""
+            logger.info("热键触发：取词结束 result=%s", "成功" if text else "空")
+            self._capture_results.put((generation, text))
 
         def handler() -> None:
             if self._capture_pending:
@@ -110,9 +135,17 @@ class HotkeyManager:
                 except Exception as exc:
                     logger.debug("记录热键目标窗口失败：%s", exc)
             logger.info("热键触发：收到系统热键，%sms 后取词", _CAPTURE_DELAY_MS)
-            QTimer.singleShot(
-                _CAPTURE_DELAY_MS,
-                lambda captured_target=target: run_capture(captured_target),
-            )
+            generation = self._capture_generation
+
+            def start_worker(captured_target=target, captured_generation=generation) -> None:
+                self._capture_poll.start()
+                threading.Thread(
+                    target=run_capture,
+                    args=(captured_generation, captured_target),
+                    name="rime-config-capture",
+                    daemon=True,
+                ).start()
+
+            QTimer.singleShot(_CAPTURE_DELAY_MS, start_worker)
 
         return handler
