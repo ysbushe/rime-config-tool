@@ -153,6 +153,21 @@ def _fake_main_window(register_results):
     return window, settings, hotkey_manager, status_widget, tray
 
 
+def test_hotkey_capture_opens_only_quick_add_dialog() -> None:
+    phrase_manager = MagicMock()
+    window = SimpleNamespace(
+        _phrase_manager=phrase_manager,
+        _select_tab=MagicMock(),
+        show_main=MagicMock(),
+    )
+
+    MainWindow._on_hotkey_trigger(window, "个人词库")
+
+    phrase_manager.open_quick_add.assert_called_once_with("个人词库", notice="")
+    window._select_tab.assert_not_called()
+    window.show_main.assert_not_called()
+
+
 def test_hotkey_apply_success_shows_feedback() -> None:
     window, settings, manager, status, tray = _fake_main_window([True])
 

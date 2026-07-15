@@ -261,9 +261,7 @@ class MainWindow(QMainWindow):
         if not captured:
             notice = "未捕获到选中文本。可在这里手动输入，或先复制文本后再收藏。"
         logger.info("热键收藏：打开弹窗 result=%s", "成功" if captured else "空")
-        # 切到词库页并弹快速收藏
-        self._select_tab(0, refresh=False)
-        self.show_main()
+        # 采集窗口可独立于隐藏的主窗口显示，避免热键打断当前工作界面。
         self._phrase_manager.open_quick_add(captured, notice=notice)
 
     def _show_result_bubble(self, ok: bool, message: str) -> None:

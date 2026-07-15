@@ -154,7 +154,7 @@ python -m venv .venv
 
 ## 版本与说明
 
-当前版本：`v0.6.2`
+当前版本：`v0.6.3`
 
 - [用户说明](docs/USER_GUIDE.md)
 - [更新记录](docs/RELEASE_NOTES.md)
