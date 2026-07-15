@@ -7,6 +7,10 @@ pypinyin 不可用时优雅降级（available=False），UI 据此提示。
 """
 from __future__ import annotations
 
+from functools import lru_cache
+import re
+import unicodedata
+
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -18,6 +22,7 @@ class PinyinService:
     def __init__(self) -> None:
         self._pinyin = None
         self._style = None
+        self._syllables: set[str] | None = None
         try:
             from pypinyin import pinyin, Style  # type: ignore
 
@@ -27,6 +32,44 @@ class PinyinService:
         except Exception as exc:
             logger.warning("pypinyin 不可用，拼音能力降级：%s", exc)
             self.available = False
+
+    def split_pinyin_code(self, code: str) -> list[str]:
+        """Split a continuous pinyin code when every segment is a known syllable."""
+        value = re.sub(r"[^a-z]", "", (code or "").lower())
+        if not value or not self.available:
+            return []
+        if self._syllables is None:
+            try:
+                from pypinyin.constants import PINYIN_DICT  # type: ignore
+                syllables: set[str] = set()
+                for readings in PINYIN_DICT.values():
+                    for reading in readings.split(","):
+                        normalized = "".join(
+                            char for char in unicodedata.normalize("NFD", reading.lower())
+                            if not unicodedata.combining(char) and char.isalpha()
+                        )
+                        if normalized:
+                            syllables.add(normalized)
+                self._syllables = syllables
+            except Exception:
+                self._syllables = set()
+
+        @lru_cache(maxsize=None)
+        def split(index: int):
+            if index == len(value):
+                return ()
+            # Prefer long syllables so xiangxing becomes xiang'xing, not xi'a'ng...
+            for end in range(min(len(value), index + 6), index, -1):
+                part = value[index:end]
+                if part not in self._syllables:
+                    continue
+                tail = split(end)
+                if tail is not None:
+                    return (part,) + tail
+            return None
+
+        result = split(0)
+        return list(result) if result and len(result) > 1 else []
 
     # ------------------------------------------------------------------ #
     def get_full_pinyin(self, text: str) -> str:

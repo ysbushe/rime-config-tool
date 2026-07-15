@@ -53,7 +53,8 @@ def test_backup_creates_dot_backup_dir(temp_rime_dir) -> None:
     svc = BackupService(str(temp_rime_dir), keep=5)
     dest = svc.backup("custom_phrase.txt")
     assert dest is not None
-    assert dest.parent.name == ".backup"
+    assert dest.parent.name == "custom_phrase.txt"
+    assert dest.parent.parent.name == ".backup"
     assert ".bak" in dest.name
 
 

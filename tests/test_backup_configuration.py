@@ -44,7 +44,9 @@ def test_custom_backup_directory_is_used(temp_rime_dir, tmp_path) -> None:
     saved = service.backup("custom_phrase.txt")
 
     assert saved is not None
-    assert saved.parent == custom
+    assert saved.parent == custom / "custom_phrase.txt"
+    assert saved.name.endswith(".bak")
+    assert len(saved.stem) == len("YYYYMMDD-HHMMSS")
     assert service.list_backups("custom_phrase.txt") == [saved]
 
 

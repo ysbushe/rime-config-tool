@@ -80,6 +80,7 @@ class SymbolsConfigWidget(QWidget):
         self._table.setHorizontalHeaderLabels(["符号", "操作"])
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.cellClicked.connect(self._on_table_clicked)
         self._table.verticalHeader().setVisible(False)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setColumnWidth(0, 200)
@@ -130,20 +131,27 @@ class SymbolsConfigWidget(QWidget):
 
     def _refresh_symbols(self) -> None:
         symbols = self._repo.get_symbols(self._current_category) if self._current_category else []
-        # QTableWidget creates a real button per symbol.  Preallocating rows
-        # while painting is paused avoids a layout pass for every insertion.
+        # A text action avoids creating one QWidget per row, which is noticeably
+        # lighter for large symbol tables.
         self._table.setUpdatesEnabled(False)
         try:
             self._table.clearContents()
             self._table.setRowCount(len(symbols))
             for row, sym in enumerate(symbols):
                 self._table.setItem(row, 0, QTableWidgetItem(sym))
-                btn = QPushButton("删除")
-                btn.setObjectName("Danger")
-                btn.clicked.connect(lambda _=False, s=sym: self._on_del_symbol(s))
-                self._table.setCellWidget(row, 1, btn)
+                action = QTableWidgetItem("删除")
+                action.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                action.setForeground(Qt.GlobalColor.darkRed)
+                self._table.setItem(row, 1, action)
         finally:
             self._table.setUpdatesEnabled(True)
+
+    def _on_table_clicked(self, row: int, column: int) -> None:
+        if column != 1:
+            return
+        item = self._table.item(row, 0)
+        if item is not None:
+            self._on_del_symbol(item.text())
 
     # ------------------------------------------------------------------ #
     def _on_add_category(self) -> None:

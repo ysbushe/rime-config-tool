@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-    QPushButton, QVBoxLayout, QWidget,
+    QPushButton, QVBoxLayout, QWidget, QFrame,
 )
 
 from src.encoding.code_suggestions import build_suggestions, normalize_display_code, raw_code
@@ -26,7 +26,9 @@ class MultiCodeEditor(QDialog):
                  create_group=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("编辑多个编码")
-        self.setFixedWidth(680)
+        self.setObjectName("AppDialog")
+        self.setMinimumWidth(680)
+        self.resize(760, 620)
         self._repo = repo
         self._pinyin = pinyin
         self._display_for = display_for
@@ -34,11 +36,21 @@ class MultiCodeEditor(QDialog):
         self._create_group_callback = create_group
         self._rows: list[tuple[QLineEdit, ClickActivatedSpinBox, QPushButton]] = []
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
         self._preview_panel = RimePreviewPanel(
             rime_preview_service, system_dictionary_index, repo, self,
         )
         layout.addWidget(self._preview_panel)
+
+        info = QFrame(self)
+        info.setObjectName("MultiCodeSection")
+        info_layout = QVBoxLayout(info)
+        info_layout.setContentsMargins(12, 10, 12, 12)
+        info_layout.setSpacing(6)
+        info_layout.addWidget(self._section_title("词条信息"))
         form = QFormLayout()
+        form.setSpacing(8)
         self._text = QLineEdit(text)
         self._text.setPlaceholderText("文本")
         self._text.textEdited.connect(self._on_text_edited)
@@ -51,31 +63,60 @@ class MultiCodeEditor(QDialog):
         if selected >= 0:
             self._group.setCurrentIndex(selected)
         self._btn_new_group = QPushButton("新建分组")
-        self._btn_new_group.setFixedWidth(82)
+        self._btn_new_group.setFixedWidth(88)
         self._btn_new_group.clicked.connect(self._create_group)
         group_row = QHBoxLayout()
         group_row.addWidget(self._group, 1)
         group_row.addWidget(self._btn_new_group)
         form.addRow("分组：", group_row)
-        layout.addLayout(form)
+        info_layout.addLayout(form)
+        layout.addWidget(info)
 
+        existing = QFrame(self)
+        existing.setObjectName("MultiCodeSection")
+        existing_layout = QVBoxLayout(existing)
+        existing_layout.setContentsMargins(12, 10, 12, 12)
+        existing_layout.setSpacing(7)
+        existing_layout.addWidget(self._section_title("已有编码"))
+        header = QWidget(existing)
+        header.setObjectName("ExistingCodeHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 0, 8, 0)
+        header_layout.addWidget(QLabel("编码"), 1)
+        weight_header = QLabel("权重")
+        weight_header.setFixedWidth(92)
+        weight_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(weight_header)
+        action_header = QLabel("操作")
+        action_header.setFixedWidth(72)
+        action_header.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_layout.addWidget(action_header)
+        existing_layout.addWidget(header)
         self._rows_layout = QVBoxLayout()
         self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        layout.addLayout(self._rows_layout)
+        self._rows_layout.setSpacing(5)
+        existing_layout.addLayout(self._rows_layout)
+        self._btn_add = QPushButton("+ 新增编码")
+        self._btn_add.setFixedWidth(108)
+        self._btn_add.clicked.connect(lambda: self._add_row("", 1))
+        existing_layout.addWidget(self._btn_add, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(existing)
         for phrase in phrases:
             self._add_row(display_for(phrase), phrase.weight)
 
-        add = QPushButton("新增编码")
-        add.setMinimumWidth(82)
-        add.clicked.connect(lambda: self._add_row("", 1))
-        layout.addWidget(add, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        self._suggestions = EncodingSuggestionPanel(pinyin, repo, self)
+        suggestions = QFrame(self)
+        suggestions.setObjectName("MultiCodeSection")
+        suggestions_layout = QVBoxLayout(suggestions)
+        suggestions_layout.setContentsMargins(12, 10, 12, 12)
+        suggestions_layout.setSpacing(7)
+        suggestions_layout.addWidget(self._section_title("待选编码"))
+        self._suggestions = EncodingSuggestionPanel(pinyin, repo, suggestions)
         self._suggestions.set_text(text)
         self._suggestions.codeSelected.connect(self._add_suggested_code)
         self._suggestions.codeAddRequested.connect(self._add_suggested_code)
         self._sync_suggestions()
-        layout.addWidget(self._suggestions)
+        suggestions_layout.addWidget(self._suggestions)
+        layout.addWidget(suggestions)
 
         self._error = QLabel()
         self._error.setProperty("role", "error")
@@ -83,11 +124,18 @@ class MultiCodeEditor(QDialog):
         layout.addWidget(self._error)
         buttons = QDialogButtonBox()
         save = buttons.addButton("保存全部", QDialogButtonBox.ButtonRole.AcceptRole)
+        save.setObjectName("Primary")
         cancel = buttons.addButton("取消", QDialogButtonBox.ButtonRole.RejectRole)
         save.clicked.connect(self._accept)
         cancel.clicked.connect(self.reject)
         layout.addWidget(buttons)
         self._refresh_preview()
+
+    @staticmethod
+    def _section_title(text: str) -> QLabel:
+        title = QLabel(text)
+        title.setObjectName("MultiCodeSectionTitle")
+        return title
 
     def _on_text_edited(self, text: str) -> None:
         self._suggestions.set_text(text)
@@ -126,7 +174,8 @@ class MultiCodeEditor(QDialog):
         self._add_row(normalized, 1)
 
     def _add_row(self, code: str, weight: int) -> None:
-        row = QWidget(self)
+        row = QFrame(self)
+        row.setObjectName("ExistingCodeRow")
         line = QLineEdit(normalize_display_code(code))
         line.setPlaceholderText("编码")
         line.textEdited.connect(lambda _text: self._on_code_edited())
@@ -135,9 +184,12 @@ class MultiCodeEditor(QDialog):
         spin.setRange(1, 99)
         spin.setValue(max(1, min(99, int(weight))))
         remove = QPushButton("删除")
+        remove.setObjectName("SecondaryAction")
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(line, 1)
+        spin.setFixedWidth(92)
+        remove.setFixedWidth(72)
         layout.addWidget(spin)
         layout.addWidget(remove)
         remove.clicked.connect(lambda: self._remove_row(row))

@@ -86,6 +86,7 @@ def test_settings_group_order(qapp) -> None:
     assert titles == [
         "Rime 目录与部署",
         "行为",
+        "词库维护",
         "GitHub 更新",
         "备份与恢复",
         "开机自启",

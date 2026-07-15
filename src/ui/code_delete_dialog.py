@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.repo.phrase_repo import Phrase
+from src.ui.dialog_workbench import dialog_section
 
 
 class _CodeChoiceRow(QWidget):
@@ -44,22 +45,26 @@ class _CodeChoiceRow(QWidget):
 class CodeDeleteDialog(QDialog):
     def __init__(self, text: str, phrases: list[Phrase], current_code: str, parent=None) -> None:
         super().__init__(parent)
+        self.setObjectName("AppDialog")
         self.setWindowTitle("删除编码")
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"选择要删除「{text}」的编码："))
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+        choices, choices_layout = dialog_section(self, f"选择要删除「{text}」的编码")
         actions = QHBoxLayout()
         select_all = QPushButton("全选")
         clear_all = QPushButton("取消全选")
         actions.addWidget(select_all)
         actions.addWidget(clear_all)
         actions.addStretch(1)
-        layout.addLayout(actions)
+        choices_layout.addLayout(actions)
         self._checks: list[tuple[Phrase, QCheckBox]] = []
         for phrase in phrases:
-            row = _CodeChoiceRow(phrase, phrase.code == current_code, self)
-            layout.addWidget(row)
+            row = _CodeChoiceRow(phrase, phrase.code == current_code, choices)
+            choices_layout.addWidget(row)
             self._checks.append((phrase, row.checkbox))
+        layout.addWidget(choices)
         select_all.clicked.connect(lambda: self._set_all(True))
         clear_all.clicked.connect(lambda: self._set_all(False))
         self._error = QLabel()

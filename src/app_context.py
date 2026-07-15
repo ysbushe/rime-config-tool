@@ -17,6 +17,7 @@ from src.service.cache_service import CacheService
 from src.service.deploy_service import DeployService
 from src.service.group_service import GroupService
 from src.service.hotkey_manager import HotkeyManager
+from src.service.library_tools import MetadataStore
 from src.service.pinyin_service import PinyinService
 from src.service.sandbox_service import SandboxService
 from src.service.system_dictionary_index import SystemDictionaryIndex
@@ -45,6 +46,7 @@ class AppContext:
     sandbox_service: SandboxService
     system_dictionary_index: SystemDictionaryIndex
     rime_preview_service: RimePreviewService
+    metadata_store: MetadataStore
 
     @classmethod
     def build(cls, settings: Optional[Settings] = None) -> "AppContext":
@@ -63,8 +65,8 @@ class AppContext:
         autostart = Autostart()
         hotkey = HotkeyManager()
         system_dictionary_index = SystemDictionaryIndex(rime_dir)
-        system_dictionary_index.ensure_ready_async()
         rime_preview = RimePreviewService(rime_dir, deploy.deployer_path)
+        metadata_store = MetadataStore(rime_dir)
 
         # 目录有效 → 指向真实文件；否则给空仓储（UI 提示设置目录）
         if rime_dir:
@@ -94,6 +96,7 @@ class AppContext:
             sandbox_service=sandbox,
             system_dictionary_index=system_dictionary_index,
             rime_preview_service=rime_preview,
+            metadata_store=metadata_store,
         )
 
     def rebuild_repos(self) -> None:
@@ -110,3 +113,4 @@ class AppContext:
         self.group_service.__init__(rime_dir)
         self.system_dictionary_index.reset(rime_dir)
         self.rime_preview_service.reset(rime_dir, self.deploy_service.deployer_path)
+        self.metadata_store = MetadataStore(rime_dir)

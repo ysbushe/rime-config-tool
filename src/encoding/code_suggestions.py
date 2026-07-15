@@ -98,6 +98,11 @@ def infer_display_code(text: str, stored_code: str, pinyin: PinyinService) -> st
                 best = candidate
         return best
 
+    # Prefer real pinyin syllables for abbreviated stored codes such as xiangxing.
+    # The text-guided matcher remains useful for short forms like w'k'l.
+    fallback = pinyin.split_pinyin_code(code)
+    if fallback:
+        return DISPLAY_SEPARATOR.join(fallback)
     matched = split(0, 0)
     return DISPLAY_SEPARATOR.join(matched[1]) if matched else code
 

@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 
-from typing import List
+from typing import Callable, List
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFontMetrics
@@ -69,9 +69,10 @@ class GroupPanel(QWidget):
 
     groupSelected = Signal(str)
 
-    def __init__(self, group_service: GroupService, parent: QWidget | None = None) -> None:
+    def __init__(self, group_service: GroupService, parent: QWidget | None = None, count_provider: Callable[[], dict[str, int]] | None = None) -> None:
         super().__init__(parent)
         self._groups = group_service
+        self._count_provider = count_provider
         self._build_ui()
         self.refresh()
 
@@ -86,7 +87,8 @@ class GroupPanel(QWidget):
         layout.addWidget(title)
 
         # 用按钮列表实现（便于样式化选中态）
-        self._btn_all = QPushButton(GroupService.all_group_label())
+        all_count = (self._count_provider() if self._count_provider else {}).get(GroupService.all_group_label(), 0)
+        self._btn_all = QPushButton(f"{GroupService.all_group_label()}  ({all_count})")
         self._btn_all.setCheckable(True)
         accent = accent_color()
         self._btn_all.setStyleSheet(
@@ -98,8 +100,10 @@ class GroupPanel(QWidget):
 
         actions = QHBoxLayout()
         self._btn_add = QPushButton("新建分组")
+        self._btn_add.setFixedWidth(82)
         self._btn_add.clicked.connect(self._on_add)
         self._btn_del = QPushButton("删除分组")
+        self._btn_del.setFixedWidth(82)
         self._btn_del.setObjectName("Danger")
         self._btn_del.clicked.connect(self._on_delete)
         actions.addWidget(self._btn_add)
@@ -123,6 +127,9 @@ class GroupPanel(QWidget):
     def refresh(self) -> None:
         # 主题切换后『全部』按钮主色需随 @ACCENT@ 更新
         self.restyle()
+        counts = self._count_provider() if self._count_provider else {}
+        self._btn_all.setText(f"{GroupService.all_group_label()}  ({counts.get(GroupService.all_group_label(), 0)})")
+        self._btn_all.setToolTip(f"{GroupService.all_group_label()}（{counts.get(GroupService.all_group_label(), 0)} 条）")
         # 移除旧分组按钮（保留『全部』）
         for btn in self._group_buttons.values():
             btn.deleteLater()
@@ -132,8 +139,9 @@ class GroupPanel(QWidget):
         fm = QFontMetrics(self.font())
         for idx, name in enumerate(self._groups.list_groups()):
             color = _GROUP_COLORS[idx % len(_GROUP_COLORS)]
-            btn = QPushButton(_elide(name))
-            btn.setToolTip(name)  # 完整名称
+            count = counts.get(name, 0)
+            btn = QPushButton(f"{_elide(name)}  ({count})")
+            btn.setToolTip(f"{name}（{count} 条）")
             btn.setCheckable(True)
             btn.setStyleSheet(_STYLE_GROUP.format(
                 color=color, overlay=_rgba(color, 0.12)))

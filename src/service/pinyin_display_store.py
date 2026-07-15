@@ -8,6 +8,7 @@ from pathlib import Path
 from src.encoding.code_suggestions import infer_display_code, normalize_display_code, raw_code
 from src.repo.phrase_repo import Phrase
 from src.service.pinyin_service import PinyinService
+from src.utils.encoding import write_text_utf8
 
 DISPLAY_INI_FILENAME = "pinyin_display.ini"
 
@@ -28,6 +29,7 @@ class PinyinDisplayStore:
     def load(self) -> None:
         self._values = {}
         self._inferred = {}
+        self._editor_inferred = {}
         if not self.path.is_file():
             return
         parser = configparser.ConfigParser(interpolation=None)
@@ -48,11 +50,27 @@ class PinyinDisplayStore:
             self._inferred[key] = infer_display_code(phrase.text, phrase.code, self._pinyin)
         return self._inferred[key]
 
+    def editor_display_for(self, phrase: Phrase) -> str:
+        """Prefer a readable syllable display in multi-code maintenance dialogs."""
+        key = self._id(phrase.text, phrase.code)
+        cached = self._editor_inferred.get(key)
+        if cached is not None:
+            return cached
+        display = self.display_for(phrase)
+        if "'" in display:
+            self._editor_inferred[key] = display
+            return display
+        inferred = infer_display_code(phrase.text, phrase.code, self._pinyin)
+        result = inferred if "'" in inferred else display
+        self._editor_inferred[key] = result
+        return result
+
     def set(self, text: str, code: str, display: str) -> None:
         normalized = normalize_display_code(display)
         stored = raw_code(code)
         key = self._id(text, stored)
         self._inferred.pop(key, None)
+        self._editor_inferred.pop(key, None)
         if normalized and raw_code(normalized) == stored and normalized != stored:
             self._values[key] = (text, stored, normalized)
         else:
@@ -68,5 +86,7 @@ class PinyinDisplayStore:
         parser = configparser.ConfigParser(interpolation=None)
         for key, (text, code, display) in sorted(self._values.items()):
             parser[f"entry:{key}"] = {"text": text, "code": code, "display": display}
-        with self.path.open("w", encoding="utf-8", newline="\n") as handle:
-            parser.write(handle)
+        from io import StringIO
+        buffer = StringIO()
+        parser.write(buffer)
+        write_text_utf8(self.path, buffer.getvalue().replace("\r\n", "\n"))

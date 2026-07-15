@@ -51,7 +51,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean build.spec
 ```
 
-产物为 `dist\RimeConfig.exe`，单文件、无控制台窗口。若提供 `assets\app.ico`，打包时会使用该图标；否则使用程序内置图标。
+单文件产物为 `dist\RimeConfig.exe`。目录式产物使用 `RimeConfig-dir.spec`，位于 `dist\RimeConfig\`；发布时压缩为 `RimeConfig-portable.zip`。若提供 `assets\app.ico`，打包时会使用该图标；否则使用程序内置图标。
 
 ## 数据与备份
 
@@ -77,4 +77,4 @@ docs/          产品和交接文档
 
 ## 发布说明
 
-当前版本：`0.4.0`。本地发布说明见 `docs/RELEASE_NOTES.md`。上传前请确认测试通过，并避免提交 `.venv/`、`build/`、`dist/`、缓存及运行日志；这些路径已写入 `.gitignore`。
+当前版本：`0.6.2`。使用说明见 `docs/USER_GUIDE.md`，更新记录见 `docs/RELEASE_NOTES.md`。上传前请确认测试通过，并避免提交 `.venv/`、`build/`、`dist/`、缓存及运行日志；这些路径已写入 `.gitignore`。

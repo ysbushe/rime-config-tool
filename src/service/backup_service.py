@@ -1,12 +1,13 @@
 """备份服务（BackupService）。
 
 铁律：任何写文件前必走 BackupService。备份落点：
-    <rime_dir>/.backup/<filename>.<YYYYMMDD-HHMMSS>.bak
+    发布版：<用户文档>/RIME 配置小工具/Backups/<filename>/<YYYYMMDD-HHMMSS>.bak
+    源码运行：<rime_dir>/.backup/<filename>/<YYYYMMDD-HHMMSS>.bak
 每文件独立轮转，保留近 N 份（默认 5）。
 """
 from __future__ import annotations
 
-import time
+import sys
 from datetime import datetime
 from pathlib import Path
 from shutil import copy2
@@ -35,7 +36,7 @@ class BackupService:
         self._auto_cleanup = True
         self._last_removed: list[Path] = []
         self._custom_backup_dir = Path(backup_dir) if backup_dir else None
-        self._backup_dir = self._custom_backup_dir or self._rime_dir / BACKUP_DIR_NAME
+        self._backup_dir = self._custom_backup_dir or self._default_backup_dir()
 
     # ------------------------------------------------------------------ #
     @property
@@ -46,7 +47,17 @@ class BackupService:
     def rime_dir(self, value: str) -> None:
         self._rime_dir = Path(value)
         if self._custom_backup_dir is None:
-            self._backup_dir = self._rime_dir / BACKUP_DIR_NAME
+            self._backup_dir = self._default_backup_dir()
+
+    def _default_backup_dir(self) -> Path:
+        """Release builds store backups in Documents; source runs keep project-local behavior."""
+        if getattr(sys, "frozen", False):
+            return Path.home() / "Documents" / "RIME 配置小工具" / "Backups"
+        return self._rime_dir / BACKUP_DIR_NAME
+
+    @property
+    def using_default_backup_dir(self) -> bool:
+        return self._custom_backup_dir is None
 
     @property
     def backup_dir(self) -> Path:
@@ -55,7 +66,7 @@ class BackupService:
     @backup_dir.setter
     def backup_dir(self, value: str) -> None:
         self._custom_backup_dir = Path(value) if value else None
-        self._backup_dir = self._custom_backup_dir or self._rime_dir / BACKUP_DIR_NAME
+        self._backup_dir = self._custom_backup_dir or self._default_backup_dir()
 
     @property
     def auto_cleanup(self) -> bool:
@@ -86,13 +97,16 @@ class BackupService:
             logger.info("源文件不存在，跳过备份：%s", src)
             return None
 
-        self._backup_dir.mkdir(parents=True, exist_ok=True)
-        # 人类可读时间戳 + 单调高精度序号，确保同秒内连续保存也文件名唯一、
-        # 不会被互相覆盖（Windows 下 datetime 分辨率约 15ms）。
-        # 格式：<filename>.<YYYYMMDD-HHMMSS>.<perf_counter_ns>.bak
+        # Each managed file has its own folder, so users see short, sortable
+        # timestamps instead of implementation-oriented file names.
+        target_dir = self._backup_dir / filename
+        target_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        unique = time.perf_counter_ns()
-        dest = self._backup_dir / f"{filename}.{ts}.{unique}.bak"
+        dest = target_dir / f"{ts}.bak"
+        suffix = 2
+        while dest.exists():
+            dest = target_dir / f"{ts}-{suffix}.bak"
+            suffix += 1
         try:
             copy2(src, dest)
             logger.info("已备份：%s -> %s", src, dest)
@@ -117,7 +131,7 @@ class BackupService:
     def _rotate(self, filename: str) -> list[Path]:
         """保留最近 keep 份，删除更早的。"""
         backups = sorted(
-            self._backup_dir.glob(f"{filename}.*.bak"),
+            [*(self._backup_dir / filename).glob("*.bak"), *self._backup_dir.glob(f"{filename}.*.bak")],
             key=lambda p: p.stat().st_mtime,
         )
         excess = len(backups) - self._keep
@@ -141,7 +155,7 @@ class BackupService:
     def list_backups(self, filename: str) -> List[Path]:
         """返回某文件的所有备份（最新在前）。"""
         return sorted(
-            self._backup_dir.glob(f"{filename}.*.bak"),
+            [*(self._backup_dir / filename).glob("*.bak"), *self._backup_dir.glob(f"{filename}.*.bak")],
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )

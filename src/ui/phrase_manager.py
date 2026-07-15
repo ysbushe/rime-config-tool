@@ -17,7 +17,7 @@ import queue
 import threading
 from typing import List, Optional, Tuple
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
+    QSizePolicy,
+    QSplitter,
     QWidget,
 )
 
@@ -35,6 +37,7 @@ from src.service.backup_service import BackupService
 from src.service.classification_service import ClassificationService
 from src.service.deploy_service import DeployService
 from src.service.group_service import GroupService
+from src.service.library_tools import MetadataStore, health_check
 from src.service.pinyin_service import PinyinService
 from src.service.pinyin_display_store import DISPLAY_INI_FILENAME, PinyinDisplayStore
 from src.service.system_dictionary_index import SystemDictionaryIndex
@@ -43,6 +46,7 @@ from src.ui.click_activated_combo import ClickActivatedComboBox
 from src.ui.delete_confirm_dialog import confirm_delete
 from src.ui.code_delete_dialog import CodeDeleteDialog
 from src.ui.group_panel import GroupPanel
+from src.ui.library_dialogs import DuplicateManagerDialog, MaintenanceDialog, issue_lines
 from src.ui.phrase_editor import PhraseEditor
 from src.ui.multi_code_editor import MultiCodeEditor
 from src.ui.phrase_table import (
@@ -71,6 +75,7 @@ class PhraseManager(QWidget):
                  pinyin: PinyinService | None = None,
                  system_dictionary_index: SystemDictionaryIndex | None = None,
                  rime_preview_service=None,
+                 metadata_store: MetadataStore | None = None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._repo = repo
@@ -81,7 +86,9 @@ class PhraseManager(QWidget):
         self._pinyin = pinyin or PinyinService()
         self._system_dictionary_index = system_dictionary_index
         self._rime_preview_service = rime_preview_service
+        self._metadata = metadata_store or MetadataStore(repo.path.parent)
         self._display_store = PinyinDisplayStore(self._repo.path.parent, self._pinyin)
+        self._quick_filter = "全部"
         self._duplicate_only = False
 
         self._keyword = ""
@@ -110,23 +117,53 @@ class PhraseManager(QWidget):
 
     # ------------------------------------------------------------------ #
     def _build_ui(self) -> None:
-        root = QHBoxLayout(self)
-        root.setSpacing(10)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        self._library_splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self._library_splitter.setChildrenCollapsible(False)
+        self._library_splitter.setHandleWidth(5)
+        root.addWidget(self._library_splitter)
 
-        # 左侧分组
-        self._group_panel = GroupPanel(self._groups)
+        # 左侧检索与分组：搜索、排序固定在分组上方，避免压缩主操作栏。
+        left_widget = QWidget(self)
+        left = QVBoxLayout(left_widget)
+        left.setContentsMargins(8, 6, 0, 0)
+        left.setSpacing(8)
+        left_controls = QWidget(left_widget)
+        left_controls.setObjectName("LibrarySideControls")
+        left_controls_layout = QVBoxLayout(left_controls)
+        left_controls_layout.setContentsMargins(0, 0, 0, 0)
+        left_controls_layout.setSpacing(5)
+        self._search = SearchBar()
+        self._search.setMinimumWidth(0)
+        self._search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._search.searchChanged.connect(self._on_search)
+        self._sort_combo = ClickActivatedComboBox()
+        self._sort_combo.addItems(["权重", "拼音", "文本", "加入顺序倒序"])
+        self._sort_combo.setCurrentText("加入顺序倒序")
+        self._sort_combo.currentTextChanged.connect(self._on_sort_changed)
+        left_controls_layout.addWidget(self._search)
+        left_controls_layout.addWidget(self._sort_combo)
+        left.addWidget(left_controls)
+        self._group_panel = GroupPanel(self._groups, count_provider=self._group_counts)
         self._group_panel.groupSelected.connect(self._on_group_selected)
-        root.addWidget(self._group_panel, 1)
+        left.addWidget(self._group_panel, 1)
+        left_widget.setMinimumWidth(190)
+        left_widget.setMaximumWidth(310)
+        self._library_splitter.addWidget(left_widget)
 
         # 右侧主区
-        right = QVBoxLayout()
+        right_widget = QWidget(self)
+        right = QVBoxLayout(right_widget)
+        right.setContentsMargins(0, 0, 0, 0)
         right.setSpacing(8)
 
-        # 工具栏
-        toolbar = QHBoxLayout()
-        self._search = SearchBar()
-        self._search.setMaximumWidth(480)  # 搜索框宽度（较此前翻倍）
-        self._search.searchChanged.connect(self._on_search)
+        # 紧凑工具栏：独立容器让其与顶部选项卡清晰分层，不增加垂直高度。
+        toolbar_widget = QWidget(self)
+        toolbar_widget.setObjectName("PhraseToolbar")
+        toolbar = QHBoxLayout(toolbar_widget)
+        toolbar.setContentsMargins(8, 5, 8, 5)
+        toolbar.setSpacing(6)
         # 批量选择：默认关闭，开启后才显示选择列 + 全选/批量删除
         self._btn_batch_select = QPushButton("批量选择")
         self._btn_batch_select.setObjectName("Primary")
@@ -138,14 +175,14 @@ class PhraseManager(QWidget):
         self._btn_batch_del.setObjectName("Danger")
         self._btn_batch_del.clicked.connect(self._on_batch_delete)
         self._btn_batch_del.setVisible(False)
-        self._sort_combo = ClickActivatedComboBox()
-        self._sort_combo.addItems(["权重", "拼音", "文本", "加入顺序倒序"])
-        self._sort_combo.setCurrentText("加入顺序倒序")
         self._btn_duplicates = QPushButton("显示重码字符/文本")
-        self._btn_duplicates.setCheckable(True)
-        self._btn_duplicates.setToolTip("只显示编码相同的并列候选，双击权重可快速调整")
-        self._btn_duplicates.toggled.connect(self._on_duplicate_toggled)
-        self._sort_combo.currentTextChanged.connect(self._on_sort_changed)
+        self._btn_duplicates.setToolTip("扫描整个词库的同文本多编码和同编码多文本项目")
+        self._btn_duplicates.clicked.connect(self._open_duplicates)
+        self._filter_combo = ClickActivatedComboBox()
+        self._filter_combo.addItems(["全部", "未分组", "英文", "低权重"])
+        self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
+        self._btn_history = QPushButton("修改历史")
+        self._btn_history.clicked.connect(self._open_history)
         self._btn_autogroup = QPushButton("自动分组")
         self._btn_autogroup.clicked.connect(self._on_auto_group)
         self._btn_add = QPushButton("+ 新增")
@@ -159,11 +196,9 @@ class PhraseManager(QWidget):
         self._btn_save.setEnabled(False)
         self._btn_undo.setEnabled(False)
 
-        toolbar.addWidget(self._search)
-        toolbar.addSpacing(8)
-        toolbar.addWidget(QLabel("排序："))
-        toolbar.addWidget(self._sort_combo)
         toolbar.addWidget(self._btn_duplicates)
+        toolbar.addWidget(self._filter_combo)
+        toolbar.addWidget(self._btn_history)
         toolbar.addStretch(1)
         toolbar.addWidget(self._btn_batch_select)
         toolbar.addWidget(self._btn_select_all)
@@ -176,7 +211,7 @@ class PhraseManager(QWidget):
         toolbar.addWidget(self._btn_add)
         toolbar.addWidget(self._btn_undo)
         toolbar.addWidget(self._btn_save)
-        right.addLayout(toolbar)
+        right.addWidget(toolbar_widget)
 
         # 表格
         self._table = PhraseTableView(group_service=self._groups)
@@ -189,7 +224,10 @@ class PhraseManager(QWidget):
         self._status = QLabel("")
         right.addWidget(self._status)
 
-        root.addLayout(right, 4)
+        self._library_splitter.addWidget(right_widget)
+        self._library_splitter.setStretchFactor(0, 0)
+        self._library_splitter.setStretchFactor(1, 1)
+        self._library_splitter.setSizes([190, 890])
 
     # ------------------------------------------------------------------ #
     # 过滤 + 刷新（显隐模式：全量仅首次/数据变更时重建，切分组/搜索只显隐）
@@ -235,11 +273,11 @@ class PhraseManager(QWidget):
         """根据当前分组与搜索关键字显隐行（不重建表格）。"""
         grp = self._current_group
         kw = self._keyword.strip().lower()
-        visibility_key = (grp, kw, self._duplicate_only, self._last_sort_mode)
+        visibility_key = (grp, kw, self._quick_filter, self._last_sort_mode)
         if visibility_key == self._visibility_key:
             return
         self._visibility_key = visibility_key
-        if not kw and not self._duplicate_only and grp == GroupService.all_group_label():
+        if not kw and self._quick_filter == "全部" and grp == GroupService.all_group_label():
             self._table.apply_filter(None)
             self._displayed = list(self._all_phrases)
             return
@@ -247,16 +285,15 @@ class PhraseManager(QWidget):
             set(self._groups.entries_of(grp))
             if grp != GroupService.all_group_label() else None
         )
-        code_counts: dict[str, int] = {}
-        if self._duplicate_only:
-            for phrase in self._all_phrases:
-                code = raw_code(phrase.code)
-                code_counts[code] = code_counts.get(code, 0) + 1
         visible = []
         for p in self._all_phrases:
             if kw and kw not in p.text.lower() and kw not in p.code.lower():
                 continue
-            if self._duplicate_only and code_counts.get(raw_code(p.code), 0) < 2:
+            if self._quick_filter == "未分组" and self._group_of(p):
+                continue
+            if self._quick_filter == "英文" and not p.text.isascii():
+                continue
+            if self._quick_filter == "低权重" and p.weight > 5:
                 continue
             if wanted is not None and p.key not in wanted:
                 continue
@@ -466,6 +503,9 @@ class PhraseManager(QWidget):
             text, _, code = key.partition("\t")
             self._groups.set_entry_group(text, code, target, save=False)
         self._groups.save()
+        self._metadata.record("批量调整分组", f"调整为「{group}」", keys)
+        self._metadata.save()
+        self._exit_batch_mode()
         self._group_panel.refresh()
         self.refresh(force=True)
         self._status.setProperty("role", "success")
@@ -491,9 +531,11 @@ class PhraseManager(QWidget):
         self._repo.save()
         self._display_store.prune(self._repo.all())
         self._display_store.save()
+        self._metadata.prune(self._repo.all())
+        self._metadata.record("批量删除", f"删除 {len(keys)} 条", keys)
+        self._metadata.save()
         self._schedule_deploy()
-        self._all_selected = False
-        self._btn_select_all.setText("全选")
+        self._exit_batch_mode()
         self.refresh(force=True)
         self._status.setText(f"已删除 {len(keys)} 条。")
 
@@ -543,10 +585,90 @@ class PhraseManager(QWidget):
         self.refresh()
 
 
-    def _on_duplicate_toggled(self, checked: bool) -> None:
-        self._duplicate_only = checked
-        self._btn_duplicates.setText("退出重码显示" if checked else "显示重码字符/文本")
+    def _on_filter_changed(self, text: str) -> None:
+        self._quick_filter = text
         self.refresh()
+
+    def _group_counts(self) -> dict[str, int]:
+        # Reuse the table's full-list cache. Group refreshes are frequent after
+        # edits; asking the repository for another copied list is unnecessary.
+        phrases = self._all_phrases if self._all_phrases else self._repo.all()
+        counts: dict[str, int] = {name: 0 for name in self._groups.list_groups()}
+        counts[GroupService.all_group_label()] = len(phrases)
+        for phrase in phrases:
+            group = self._group_of(phrase)
+            if group:
+                counts[group] = counts.get(group, 0) + 1
+        return counts
+
+    def _exit_batch_mode(self) -> None:
+        if self._batch_mode:
+            self._batch_mode = False
+            self._table.set_select_column_visible(False)
+            self._btn_select_all.setVisible(False)
+            self._btn_batch_del.setVisible(False)
+            self._btn_batch_group.setVisible(False)
+            self._btn_batch_select.setText("批量选择")
+        self._table.set_all_checked(False)
+        self._all_selected = False
+        self._btn_select_all.setText("全选")
+
+    def _open_duplicates(self) -> None:
+        DuplicateManagerDialog(self._repo.all(), self._apply_duplicate_group, self, self._display_store.editor_display_for).exec()
+
+    def _apply_duplicate_group(self, original: list[Phrase], entries: list[Phrase]) -> None:
+        if not entries:
+            QMessageBox.warning(self, "未保存", "至少保留一条有效编码。")
+            return
+        self._persist_backup()
+        preserved_groups = {(item.text, item.code): self._group_of(item) for item in original}
+        for item in original:
+            self._repo.delete(item.text, item.code)
+            self._groups.set_entry_group(item.text, item.code, "", save=False)
+        for item in entries:
+            code = raw_code(item.code)
+            self._repo.upsert(item.text, code, self._clamp_weight(item.weight))
+            self._groups.set_entry_group(item.text, code, preserved_groups.get((item.text, item.code), ""), save=False)
+        self._repo.save()
+        self._groups.save()
+        self._display_store.prune(self._repo.all())
+        self._display_store.save()
+        self._metadata.prune(self._repo.all())
+        before = "；".join(f"{item.text}/{self._display_store.display_for(item)}@{item.weight}" for item in original)
+        after = "；".join(f"{item.text}/{item.code}@{item.weight}" for item in entries)
+        final_keys = {(item.text, raw_code(item.code), item.weight) for item in entries}
+        removed = [item for item in original if (item.text, raw_code(item.code), item.weight) not in final_keys]
+        removed_text = "；".join(f"{item.text}/{self._display_store.display_for(item)}" for item in removed)
+        detail = f"修改前：{before or '无'}；修改后：{after or '无'}"
+        if removed_text:
+            detail += f"；删除：{removed_text}"
+        self._metadata.record("重码集中编辑", detail, [item.key for item in original])
+        self._metadata.save()
+        self.refresh(force=True)
+        self._group_panel.refresh()
+        self._schedule_deploy()
+        message = f"已集中保存 {len(entries)} 条重码项目。"
+        self._status.setProperty("role", "success")
+        self._status.setText(message)
+        self.editCompleted.emit(True, message)
+
+    def open_health_check(self) -> None:
+        MaintenanceDialog("词库检查", issue_lines(health_check(self._repo.all(), self._groups)), self).exec()
+
+    def _open_health(self) -> None:
+        self.open_health_check()
+
+    def _open_history(self) -> None:
+        lines = [f"{item['at']}  {item['action']}：{item['detail']}" for item in self._metadata.history()]
+        MaintenanceDialog("修改历史", lines, self).exec()
+
+    def _selected_phrase(self) -> Phrase | None:
+        index = self._table.currentIndex()
+        if index.isValid() and 0 <= index.row() < len(self._displayed):
+            return self._displayed[index.row()]
+        return None
+
+
     def _on_add(self) -> None:
         editor = PhraseEditor(
             phrase=None, groups=self._groups.list_groups(),
@@ -593,10 +715,6 @@ class PhraseManager(QWidget):
             for old in phrases:
                 self._repo.delete(old.text, old.code)
                 self._groups.set_entry_group(old.text, old.code, "")
-            for key, new_weight in editor.weight_updates().items():
-                old_text, separator, old_code = key.partition("\t")
-                if separator:
-                    self._repo.update_weight(old_text, old_code, self._clamp_weight(new_weight))
             for entry in entries:
                 code = str(entry["code"])
                 weight = self._clamp_weight(int(entry["weight"]))
@@ -667,12 +785,9 @@ class PhraseManager(QWidget):
                 self._repo.update_weight(
                     existing_text, existing_code, self._clamp_weight(new_weight))
         if existing is not None:
-            # Exact duplicates retain their current weight unless the user
-            # explicitly changed that entry in the inline conflict editor.
             weight = existing.weight
         self._persist_backup()
         phrase, _new, conflict = self._repo.upsert(text, code, weight)
-        # 分组归属
         self._groups.set_entry_group(text, code, group)
         self._repo.save()
         self._display_store.set(text, code, display_code)
@@ -688,9 +803,7 @@ class PhraseManager(QWidget):
         self.refresh(force=True)
         if reset_view:
             self._table.select_key(phrase.key)
-            self._schedule_deploy()
-        else:
-            self._schedule_deploy()
+        self._schedule_deploy()
 
     # ------------------------------------------------------------------ #
     def quick_add(self, text: str, code: str = "", weight: int = 1,
@@ -742,13 +855,14 @@ class PhraseManager(QWidget):
     def reattach(self, repo: PhraseRepo, groups: GroupService,
                  backup: BackupService,
                  system_dictionary_index: SystemDictionaryIndex | None = None,
-                 rime_preview_service=None) -> None:
+                 rime_preview_service=None, metadata_store: MetadataStore | None = None) -> None:
         """Reconnect sidecars and views after Rime directory or sandbox changes."""
         self._repo = repo
         self._groups = groups
         self._backup = backup
         self._system_dictionary_index = system_dictionary_index
         self._rime_preview_service = rime_preview_service
+        self._metadata = metadata_store or MetadataStore(repo.path.parent)
         self._display_store = PinyinDisplayStore(repo.path.parent, self._pinyin)
         self._group_panel._groups = groups
         self._group_panel.select_all(emit=False)
@@ -807,6 +921,8 @@ class PhraseManager(QWidget):
         self._status.setText(
             "已保存并完成自动部署。" if ok else f"已保存。部署提示：{msg}"
         )
+        self._metadata.record("自动部署", "成功" if ok else msg)
+        self._metadata.save()
         if self._rime_preview_service is not None:
             if ok:
                 self._rime_preview_service.invalidate_after_deploy()

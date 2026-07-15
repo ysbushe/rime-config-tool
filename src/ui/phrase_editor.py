@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFrame,
     QFormLayout,
     QHBoxLayout,
     QInputDialog,
@@ -49,6 +50,7 @@ class PhraseEditor(QDialog):
                  create_group=None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("AppDialog")
         self.setWindowTitle("编辑词条" if phrase else "新增词条")
         self.setFixedWidth(680)
         self._phrase = phrase
@@ -66,6 +68,8 @@ class PhraseEditor(QDialog):
     # ------------------------------------------------------------------ #
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
         self._preview_panel = RimePreviewPanel(
             self._rime_preview_service, self._system_dictionary_index, self._repo, self,
         )
@@ -131,7 +135,15 @@ class PhraseEditor(QDialog):
         self._english_upper = QCheckBox("英文输出为大写（编码保持小写）")
         self._english_upper.setEnabled(False)
         form.addRow("英文：", self._english_upper)
-        layout.addLayout(form)
+        info_section = QFrame(self)
+        info_section.setObjectName("DialogSection")
+        info_layout = QVBoxLayout(info_section)
+        info_layout.setContentsMargins(12, 10, 12, 12)
+        info_title = QLabel("词条信息")
+        info_title.setObjectName("DialogSectionTitle")
+        info_layout.addWidget(info_title)
+        info_layout.addLayout(form)
+        layout.addWidget(info_section)
 
         self._err = QLabel("")
         self._err.setProperty("role", "error")
@@ -140,7 +152,15 @@ class PhraseEditor(QDialog):
         )
         self._suggestion_panel.codeSelected.connect(self._set_suggested_code)
         self._suggestion_panel.codeAddRequested.connect(self._add_code)
-        layout.addWidget(self._suggestion_panel)
+        suggestion_section = QFrame(self)
+        suggestion_section.setObjectName("DialogSection")
+        suggestion_layout = QVBoxLayout(suggestion_section)
+        suggestion_layout.setContentsMargins(12, 10, 12, 12)
+        suggestion_title = QLabel("待选编码")
+        suggestion_title.setObjectName("DialogSectionTitle")
+        suggestion_layout.addWidget(suggestion_title)
+        suggestion_layout.addWidget(self._suggestion_panel)
+        layout.addWidget(suggestion_section)
 
         layout.addWidget(self._err)
 
@@ -148,6 +168,7 @@ class PhraseEditor(QDialog):
         buttons = QDialogButtonBox()
         btn_save = buttons.addButton("保存", QDialogButtonBox.ButtonRole.AcceptRole)
         btn_cancel = buttons.addButton("取消", QDialogButtonBox.ButtonRole.RejectRole)
+        btn_save.setObjectName("Primary")
         btn_save.clicked.connect(self._on_accept)
         btn_cancel.clicked.connect(self.reject)
         btn_save.setDefault(True)

@@ -16,6 +16,7 @@ class SearchBar(QLineEdit):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("LibrarySearch")
         self.setPlaceholderText("搜索文本或编码…")
         self.setClearButtonEnabled(True)
         self._debounce = QTimer(self)

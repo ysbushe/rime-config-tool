@@ -15,6 +15,7 @@ from PySide6.QtCore import QItemSelectionModel, Qt, QRect, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHeaderView,
     QStyledItemDelegate,
     QTableView,
 )
@@ -110,7 +111,11 @@ class PhraseTableView(QTableView):
         self.setColumnWidth(COL_CODE, 170)
         self.setColumnWidth(COL_WEIGHT, 64)
         self.setColumnWidth(COL_GROUP, 110)
-        self.horizontalHeader().setStretchLastSection(True)
+        self.setColumnWidth(COL_ACTION, 76)
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(COL_CODE, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(COL_ACTION, QHeaderView.ResizeMode.Fixed)
+        header.setStretchLastSection(False)
         self.doubleClicked.connect(self._on_double_click)
 
         # 选择列默认隐藏（由批量选择按钮开启）

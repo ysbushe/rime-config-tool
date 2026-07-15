@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from src.config.paths import settings_path
+from src.utils.encoding import write_text_utf8
 from src.config.rime_path_detector import RimePathDetector
 from src.utils.logger import get_logger
 
@@ -103,9 +104,10 @@ class Settings:
         parser = configparser.ConfigParser(interpolation=None)
         parser["backup"] = {"path": str(self._data.get("backup_dir", ""))}
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("w", encoding="utf-8", newline="\n") as handle:
-                parser.write(handle)
+            from io import StringIO
+            buffer = StringIO()
+            parser.write(buffer)
+            write_text_utf8(path, buffer.getvalue().replace("\r\n", "\n"))
         except Exception as exc:
             logger.warning("保存备份 INI 失败：%s", exc)
 
@@ -113,11 +115,7 @@ class Settings:
         """写入 settings.json（仅已知字段）。"""
         p = settings_path()
         try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(
-                json.dumps(self._data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            write_text_utf8(p, json.dumps(self._data, ensure_ascii=False, indent=2))
         except Exception as exc:
             logger.warning("保存设置失败：%s", exc)
 

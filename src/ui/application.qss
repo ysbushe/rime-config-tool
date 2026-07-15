@@ -14,11 +14,22 @@
 }
 
 QWidget {
-    background-color: @BG_APP@;
+    background-color: transparent;
+}
+
+/* Pure layout containers stay transparent; interactive surfaces are declared below. */
+QStackedWidget, QScrollArea {
+    background-color: transparent;
+    border: none;
+}
+
+QScrollArea > QWidget > QWidget,
+QDialog QLabel {
+    background-color: transparent;
 }
 
 /* ---------- 主窗口 / 容器卡片 ---------- */
-QMainWindow, QWidget#Central {
+QMainWindow, QWidget#Central, QTabWidget::pane {
     background-color: @BG_APP@;
 }
 
@@ -153,9 +164,17 @@ QTableWidget {
     background-color: @BG_SURFACE@;
     border: 1px solid @BORDER@;
     border-radius: 8px;
-    gridline-color: @BORDER@;
+    gridline-color: @TABLE_GRID@;
     selection-background-color: @SELECTION_BG@;
     selection-color: @SELECTION_TEXT@;
+}
+
+QTableWidget::viewport, QTableView::viewport, QListWidget::viewport {
+    background-color: @BG_SURFACE@;
+}
+
+QTableWidget::item, QTableView::item {
+    background-color: @BG_SURFACE@;
 }
 
 QHeaderView::section {
@@ -182,7 +201,7 @@ QTableWidget::item[conflict="true"] {
 QTableView {
     background-color: @BG_SURFACE@;
     border: 1px solid @BORDER@;
-    gridline-color: @BORDER@;
+    gridline-color: @TABLE_GRID@;
     selection-background-color: @SELECTION_BG@;
     selection-color: @SELECTION_TEXT@;
     color: @TEXT_PRIMARY@;
@@ -332,18 +351,26 @@ QStatusBar {
 }
 
 QScrollBar:vertical {
-    background: transparent;
-    width: 10px;
+    background: @BG_ELEVATED@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    width: 12px;
+    margin: 2px;
 }
 
 QScrollBar::handle:vertical {
-    background: @BORDER_STRONG@;
+    background: @TEXT_MUTED@;
+    border: 2px solid @BG_ELEVATED@;
     border-radius: 5px;
-    min-height: 24px;
+    min-height: 32px;
 }
 
-QScrollBar::handle:vertical:hover {
-    background: @BORDER_STRONG@;
+QScrollBar::handle:vertical:hover, QScrollBar::handle:vertical:pressed {
+    background: @ACCENT@;
+}
+
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
 }
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
@@ -522,4 +549,119 @@ QLabel#RimePreviewWeight, QLabel#RimePreviewWeightTitle {
 QLabel#RimePreviewDetails {
     color: @NEUTRAL_TEXT@;
     font-size: 12px;
+}
+
+/* Compact visual boundary between the top tabs and the phrase action strip. */
+QTabWidget#TopTabs::pane {
+    border: 1px solid @BORDER_STRONG@;
+    border-top: 0;
+    border-radius: 0 0 8px 8px;
+}
+QTabWidget#TopTabs QTabBar::tab {
+    min-height: 25px;
+}
+QWidget#PhraseToolbar {
+    background: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+}
+QWidget#PhraseToolbar QPushButton,
+QWidget#PhraseToolbar QComboBox {
+    min-height: 26px;
+}
+
+
+QWidget#LibrarySideControls {
+    background: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+    padding: 4px;
+}
+
+/* ---------- 统一弹窗工作台 ---------- */
+QDialog {
+    background-color: @BG_APP@;
+}
+QDialog QWidget#DialogSection, QFrame#DialogSection {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+}
+QLabel#DialogSectionTitle {
+    color: @ACCENT@;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 0 2px 5px 2px;
+}
+QDialogButtonBox QPushButton {
+    min-width: 88px;
+}
+
+/* ---------- 多编码编辑专用工作台 ---------- */
+QFrame#MultiCodeSection {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+}
+QLabel#MultiCodeSectionTitle {
+    background: transparent;
+    border: none;
+    color: @ACCENT@;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 0 0 5px 0;
+}
+QWidget#ExistingCodeHeader {
+    background-color: @BG_ELEVATED@;
+    border: none;
+    border-bottom: 1px solid @BORDER@;
+}
+QFrame#ExistingCodeRow {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+}
+QWidget#RimePreviewPanel {
+    background-color: @ACCENT_SOFT@;
+    border: 1px solid @ACCENT@;
+    border-radius: 8px;
+}
+QFrame#EncodingSuggestion QLabel#SuggestionName {
+    background-color: @ACCENT_SOFT@;
+    border: 1px solid @BORDER@;
+    border-radius: 4px;
+    padding: 3px 6px;
+}
+
+QDialog, QDialog * {
+    font-family: @FONT_UI@;
+    font-size: 14px;
+}
+QDialog QLineEdit, QDialog QComboBox, QDialog QSpinBox {
+    min-height: 26px;
+}
+QPushButton#SecondaryAction {
+    color: @ACCENT@;
+    border-color: @ACCENT@;
+}
+QPushButton#SecondaryAction:hover {
+    background-color: @ACCENT_SOFT@;
+    color: @ACCENT_HOVER@;
+}
+
+QPlainTextEdit {
+    background-color: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 8px;
+    padding: 8px;
+}
+QWidget#DialogSection, QFrame#DialogSection {
+    background-color: @BG_SURFACE@;
+}
+QDialog QTableWidget, QDialog QTableView, QDialog QPlainTextEdit {
+    background-color: @BG_SURFACE@;
+}
+QDialog QHeaderView::section {
+    background-color: @BG_ELEVATED@;
+    border-bottom: 1px solid @BORDER@;
 }

@@ -11,10 +11,16 @@ import threading
 import time
 from typing import Optional
 
+from PySide6.QtCore import QObject, Signal
+
 from src.encoding.code_suggestions import raw_code
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+class PreviewEvents(QObject):
+    changed = Signal()
 
 
 @dataclass(frozen=True)
@@ -36,6 +42,7 @@ class RimePreviewService:
 
     def __init__(self, rime_dir: str = "", deployer_path: str = "") -> None:
         self._lock = threading.RLock()
+        self.events = PreviewEvents()
         self._rime_dir = rime_dir
         self._deployer_path = deployer_path
         self._process: subprocess.Popen | None = None
@@ -43,6 +50,35 @@ class RimePreviewService:
         self._request_id = 0
         self._queued_code = ""
         self._busy = False
+        self._idle_timer: threading.Timer | None = None
+        # Keep the preview host warm while the user edits, then release librime.
+        self._idle_timeout_seconds = 90
+
+    def _cancel_idle_close_locked(self) -> None:
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+
+    def _schedule_idle_close_locked(self) -> None:
+        self._cancel_idle_close_locked()
+        if self._process is None:
+            return
+        timer = threading.Timer(self._idle_timeout_seconds, self._close_when_idle)
+        timer.daemon = True
+        self._idle_timer = timer
+        timer.start()
+
+    def _close_when_idle(self) -> None:
+        with self._lock:
+            self._idle_timer = None
+            if self._busy:
+                return
+        self.close()
+
+    def _set_snapshot(self, snapshot: PreviewSnapshot) -> None:
+        with self._lock:
+            self._snapshot = snapshot
+        self.events.changed.emit()
 
     @property
     def snapshot(self) -> PreviewSnapshot:
@@ -57,18 +93,21 @@ class RimePreviewService:
             self._rime_dir = rime_dir
             self._deployer_path = deployer_path
             self._snapshot = PreviewSnapshot("idle")
+        self.events.changed.emit()
 
     def mark_waiting_for_deploy(self) -> None:
         with self._lock:
             self._request_id += 1
             self._queued_code = ""
             self._snapshot = PreviewSnapshot("waiting_deploy", message="配置已保存，等待重新部署后刷新候选预览。")
+        self.events.changed.emit()
 
     def invalidate_after_deploy(self) -> None:
         self.close()
         with self._lock:
             self._request_id += 1
             self._snapshot = PreviewSnapshot("stale", message="已重新部署，候选预览服务正在刷新。")
+        self.events.changed.emit()
         self.warm_up_async()
 
     def warm_up_async(self) -> None:
@@ -105,14 +144,17 @@ class RimePreviewService:
     def request(self, code: str) -> None:
         code = raw_code(code)
         with self._lock:
+            self._cancel_idle_close_locked()
             self._request_id += 1
             self._queued_code = code
             if not code:
                 self._snapshot = PreviewSnapshot("idle")
+                self.events.changed.emit()
                 return
             if self._snapshot.state == "waiting_deploy":
                 return
             self._snapshot = PreviewSnapshot("loading" if self._process is None else "querying", code=code)
+            self.events.changed.emit()
             if self._busy:
                 return
             self._busy = True
@@ -120,6 +162,7 @@ class RimePreviewService:
 
     def close(self) -> None:
         with self._lock:
+            self._cancel_idle_close_locked()
             process, self._process = self._process, None
         if process is None:
             return
@@ -138,6 +181,7 @@ class RimePreviewService:
                 request_id = self._request_id
                 code = self._queued_code
                 self._snapshot = PreviewSnapshot("querying", code=code)
+            self.events.changed.emit()
             try:
                 process = self._ensure_process()
                 payload = {
@@ -161,10 +205,13 @@ class RimePreviewService:
                 if request_id == self._request_id:
                     self._snapshot = snapshot
                     self._busy = False
+                    self._schedule_idle_close_locked()
+                    self.events.changed.emit()
                     return
                 # Saving without deployment and repository resets cancel any in-flight lookup.
                 if not self._queued_code or self._snapshot.state in {"waiting_deploy", "idle"}:
                     self._busy = False
+                    self._schedule_idle_close_locked()
                     return
                 # The input changed during this query; loop once for the newest code.
 
@@ -178,9 +225,15 @@ class RimePreviewService:
             if getattr(sys, "frozen", False):
                 args = [sys.executable, "--rime-preview-host"]
             else:
-                args = [sys.executable, "-m", "src.main", "--rime-preview-host"]
+                args = [
+                    sys.executable,
+                    "-c",
+                    "from src.service.rime_preview_host import run; raise SystemExit(run())",
+                ]
+            preview_env = dict(__import__("os").environ)
+            preview_env["RIME_CONFIG_PREVIEW_HOST"] = "1"
             self._process = subprocess.Popen(
-                args, cwd=str(Path(__file__).resolve().parents[2]), text=True,
+                args, cwd=str(Path(__file__).resolve().parents[2]), env=preview_env, text=True,
                 encoding="utf-8", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )

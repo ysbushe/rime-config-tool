@@ -79,6 +79,13 @@ class ToastNotification(QFrame):
         self.raise_()
         self._timer.start(10000)
 
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.RightButton:
+            self.hide()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def contextMenuEvent(self, event) -> None:
         self.hide()
         event.accept()

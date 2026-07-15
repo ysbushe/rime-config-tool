@@ -3,7 +3,7 @@
 覆盖：
     - apply_theme 三主题均能把模板占位符替换完（无 @XXX@ 残留）
     - 模板所用占位符均在 THEME_TOKENS 有定义
-    - THEME_TOKENS 三套各含 33 令牌，A/B 的 @SEAL@ 为 ""
+    - THEME_TOKENS 三套各含 34 令牌，A/B 的 @SEAL@ 为 ""
     - conflict_background() / accent_color() 返回当前主题值
     - ink 装饰在 ink 时显示、非 ink 隐藏
 """
@@ -26,7 +26,7 @@ from src.ui.theme import (
 
 _ALL_TOKENS = [
     "@BG_APP@", "@BG_SURFACE@", "@BG_SIDEBAR@", "@BG_ELEVATED@", "@BG_HOVER@",
-    "@BG_ACTIVE_NAV@", "@BORDER@", "@BORDER_STRONG@", "@TEXT_PRIMARY@",
+    "@BG_ACTIVE_NAV@", "@BORDER@", "@BORDER_STRONG@", "@TABLE_GRID@", "@TEXT_PRIMARY@",
     "@TEXT_SECONDARY@", "@TEXT_MUTED@", "@ACCENT@", "@ACCENT_HOVER@",
     "@ACCENT_SOFT@", "@ON_ACCENT@", "@SUCCESS_TEXT@", "@SUCCESS_BG@",
     "@CONFLICT_BG@", "@CONFLICT_BORDER@", "@CONFLICT_TEXT@", "@SEAL@",
@@ -40,7 +40,7 @@ _ALL_TOKENS = [
 def test_theme_tokens_count_and_seal() -> None:
     assert set(THEME_TOKENS.keys()) == {"light", "dark", "ink"}
     for name, tokens in THEME_TOKENS.items():
-        assert len(tokens) == 33, f"{name} 应有 33 个令牌，实际 {len(tokens)}"
+        assert len(tokens) == 34, f"{name} 应有 34 个令牌，实际 {len(tokens)}"
         for tk in _ALL_TOKENS:
             assert tk in tokens, f"{name} 缺少令牌 {tk}"
         # A/B 的印章令牌为空；C 为朱砂
@@ -95,7 +95,8 @@ def test_ink_decor_visibility_follows_theme(qapp) -> None:
     try:
         apply_theme("ink")
         assert decor.isHidden() is False
-        assert seal.isHidden() is False
+        # 朱砂印章会遮挡主窗口左上内容，主题 C 仅保留贴边细线。
+        assert seal.isHidden() is True
 
         apply_theme("dark")
         assert decor.isHidden() is True

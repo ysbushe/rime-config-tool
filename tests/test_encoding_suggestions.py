@@ -200,7 +200,8 @@ def test_delete_code_dialog_uses_aligned_grid(qapp) -> None:
     dialog = CodeDeleteDialog("对下", [Phrase("对下", "duixia", 1), Phrase("对下", "duix", 1)], "duix")
 
     assert dialog.selected()[0].code == "duix"
-    assert dialog.layout().count() >= 4
+    choices = dialog.layout().itemAt(0).widget()
+    assert choices.objectName() == "DialogSection"
 
 
 def test_delete_code_row_click_toggles_selection(qapp) -> None:
@@ -209,7 +210,7 @@ def test_delete_code_row_click_toggles_selection(qapp) -> None:
     from src.ui.code_delete_dialog import CodeDeleteDialog
 
     dialog = CodeDeleteDialog("对下", [Phrase("对下", "duixia", 1)], "duixia")
-    row = dialog.layout().itemAt(2).widget()
+    row = dialog._checks[0][1].parentWidget()
     assert dialog.selected()
 
     QTest.mouseClick(row, Qt.MouseButton.LeftButton)

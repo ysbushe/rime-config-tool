@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import queue
 import sys
@@ -22,6 +22,7 @@ from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
+    QGridLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -163,12 +164,14 @@ class SettingsWidget(QWidget):
     def __init__(self, settings: Settings, autostart: Autostart,
                  deploy: DeployService, schema_repo: SchemaRepo | None = None,
                  backup: BackupService | None = None,
+                 health_opener=None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._settings = settings
         self._autostart = autostart
         self._deploy = deploy
         self._schema_repo = schema_repo
+        self._health_opener = health_opener
         self._backup = backup or BackupService(
             settings.rime_dir, getattr(settings, "backup_count", 5),
             getattr(settings, "backup_dir", ""))
@@ -184,6 +187,10 @@ class SettingsWidget(QWidget):
         self._update_poll.timeout.connect(self._drain_update_results)
         self._build_ui()
         self.refresh()
+
+    def _on_library_health(self) -> None:
+        if self._health_opener is not None:
+            self._health_opener()
 
     def _build_theme_selector(self) -> QWidget:
         selector = QWidget()
@@ -353,9 +360,14 @@ class SettingsWidget(QWidget):
         self._repo_link.setOpenExternalLinks(True)
         self._btn_check_update = QPushButton("检查更新")
         self._btn_check_update.clicked.connect(self._on_check_update)
+        self._btn_user_guide = QPushButton("用户说明")
+        self._btn_user_guide.clicked.connect(lambda: self._open_project_document("docs/USER_GUIDE.md"))
+        self._btn_release_notes = QPushButton("更新说明")
+        self._btn_release_notes.clicked.connect(lambda: self._open_project_document("docs/RELEASE_NOTES.md"))
         self._lbl_update_status = QLabel()
         self._lbl_update_status.setWordWrap(True)
         self._lbl_update_status.setProperty("role", "info")
+        self._lbl_update_status.setVisible(False)
 
         self._cb_autodeploy.toggled.connect(lambda v: self._settings.set("auto_deploy", v))
         self._cb_hotkey.toggled.connect(self._on_hotkey_toggled)
@@ -371,6 +383,17 @@ class SettingsWidget(QWidget):
             b_form.addRow(self._cb_sandbox)
         root.addWidget(g_behavior)
 
+        g_library = QGroupBox("词库维护")
+        library_layout = QHBoxLayout(g_library)
+        self._btn_library_health = QPushButton("词库检查")
+        self._btn_library_health.setObjectName("Primary")
+        self._btn_library_health.setEnabled(self._health_opener is not None)
+        self._btn_library_health.clicked.connect(self._on_library_health)
+        library_layout.addWidget(QLabel("检查空值、权重、重复项和无效分组。"))
+        library_layout.addStretch(1)
+        library_layout.addWidget(self._btn_library_health)
+        root.addWidget(g_library)
+
         g_github = QGroupBox("GitHub 更新")
         github_layout = QVBoxLayout(g_github)
         github_row = QHBoxLayout()
@@ -378,6 +401,8 @@ class SettingsWidget(QWidget):
         github_row.addWidget(self._lbl_version)
         github_row.addSpacing(14)
         github_row.addWidget(self._repo_link)
+        github_row.addWidget(self._btn_user_guide)
+        github_row.addWidget(self._btn_release_notes)
         github_row.addStretch(1)
         github_row.addWidget(self._btn_check_update)
         github_layout.addLayout(github_row)
@@ -393,27 +418,16 @@ class SettingsWidget(QWidget):
         self._btn_backup_browse.clicked.connect(self._on_backup_browse)
         self._btn_backup_default = QPushButton("使用默认")
         self._btn_backup_default.clicked.connect(self._on_backup_default)
+        self._btn_backup_open = QPushButton("打开备份文件夹")
+        self._btn_backup_open.clicked.connect(self._open_backup_dir)
+        self._lbl_next_backup = QLabel()
+        self._lbl_next_backup.setProperty("role", "info")
         backup_path_row.addWidget(self._backup_path, 1)
         backup_path_row.addWidget(self._btn_backup_browse)
         backup_path_row.addWidget(self._btn_backup_default)
+        backup_path_row.addWidget(self._btn_backup_open)
         backup_form.addRow("备份路径：", backup_path_row)
-        backup_form.addRow("备份保留份数：", self._backup_combo)
-        backup_form.addRow(self._cb_scheduled_backup)
-        period_row = QHBoxLayout()
-        period_row.addWidget(self._backup_interval)
-        period_row.addWidget(QLabel("天"))
-        period_row.addStretch(1)
-        backup_form.addRow("备份周期：", period_row)
-        backup_form.addRow(self._cb_backup_cleanup)
-        backup_actions = QHBoxLayout()
-        self._btn_backup_settings_save.setFixedWidth(126)
-        self._btn_backup_now.setFixedWidth(96)
-        backup_actions.addWidget(self._btn_backup_settings_save)
-        backup_actions.addWidget(self._btn_backup_now)
-        backup_actions.addStretch(1)
-        backup_form.addRow("", backup_actions)
 
-        restore_row = QHBoxLayout()
         self._restore_file = ClickActivatedComboBox()
         for filename, purpose in _MANAGED_FILES:
             self._restore_file.addItem(purpose, filename)
@@ -422,13 +436,40 @@ class SettingsWidget(QWidget):
         self._btn_restore.setObjectName("Primary")
         self._btn_restore.clicked.connect(self._on_restore_backup)
         self._restore_file.currentIndexChanged.connect(self._refresh_backup_versions)
-        restore_row.addWidget(self._restore_file)
-        restore_row.addWidget(self._restore_version, 1)
-        restore_row.addWidget(self._btn_restore)
-        backup_form.addRow("恢复：", restore_row)
+
+        backup_settings = QWidget(g_backup)
+        settings_grid = QGridLayout(backup_settings)
+        settings_grid.setContentsMargins(0, 0, 0, 0)
+        settings_grid.setHorizontalSpacing(9)
+        settings_grid.setVerticalSpacing(7)
+        action_width = 112
+        for button in (self._btn_backup_settings_save, self._btn_backup_now, self._btn_restore):
+            button.setFixedWidth(action_width)
+
+        settings_grid.addWidget(QLabel("保留份数："), 0, 0)
+        settings_grid.addWidget(self._backup_combo, 0, 1)
+        settings_grid.addWidget(self._cb_scheduled_backup, 0, 2)
+        settings_grid.addWidget(self._cb_backup_cleanup, 0, 3)
+        settings_grid.addWidget(self._btn_backup_settings_save, 0, 5)
+
+        settings_grid.addWidget(QLabel("恢复："), 1, 0)
+        settings_grid.addWidget(self._restore_file, 1, 1)
+        settings_grid.addWidget(self._restore_version, 1, 2, 1, 2)
+        settings_grid.addWidget(self._btn_backup_now, 1, 5)
+
+        settings_grid.addWidget(QLabel("备份周期："), 2, 0)
+        settings_grid.addWidget(self._backup_interval, 2, 1)
+        settings_grid.addWidget(QLabel("天"), 2, 2)
+        self._lbl_next_backup.setContentsMargins(20, 0, 0, 0)
+        settings_grid.addWidget(self._lbl_next_backup, 2, 3, 1, 2)
+        settings_grid.addWidget(self._btn_restore, 2, 5)
+        settings_grid.setColumnStretch(3, 1)
+        backup_form.addRow(backup_settings)
+
         self._lbl_backup_status = QLabel()
         self._lbl_backup_status.setWordWrap(True)
         self._lbl_backup_status.setProperty("role", "info")
+        self._lbl_backup_status.setVisible(False)
         backup_form.addRow(self._lbl_backup_status)
         root.addWidget(g_backup)
 
@@ -459,7 +500,12 @@ class SettingsWidget(QWidget):
         self._backup.keep = self._settings.backup_count
         self._backup.auto_cleanup = bool(getattr(self._settings, "backup_auto_cleanup", True))
         self._backup.backup_dir = getattr(self._settings, "backup_dir", "")
-        self._backup_path.setText(str(self._backup.backup_dir))
+        if getattr(sys, "frozen", False) and self._backup.using_default_backup_dir:
+            self._backup_path.setText(r"默认：用户文档\RIME 配置小工具\Backups")
+            self._backup_path.setToolTip(str(self._backup.backup_dir))
+        else:
+            self._backup_path.setText(str(self._backup.backup_dir))
+            self._backup_path.setToolTip("")
         self._btn_backup_default.setEnabled(bool(getattr(self._settings, "backup_dir", "")))
         self._refresh_backup_versions()
         self._cb_autodeploy.setChecked(self._settings.auto_deploy)
@@ -496,6 +542,7 @@ class SettingsWidget(QWidget):
                 control.setChecked(value) if isinstance(control, QCheckBox) else control.setValue(value)
             finally:
                 control.blockSignals(False)
+        self._refresh_next_backup_label()
         # Refreshing a persisted checkbox must not invoke its system action.
         self._cb_autostart.blockSignals(True)
         try:
@@ -642,6 +689,26 @@ class SettingsWidget(QWidget):
         self._set_theme_cards(theme)
         self.themeChanged.emit(theme)  # type: ignore
 
+    def _refresh_next_backup_label(self) -> None:
+        pending = self._pending_backup_settings
+        if not pending.get("scheduled_backup_enabled", False):
+            self._lbl_next_backup.setText("定期备份未启用")
+            return
+        interval = max(1, int(pending.get("backup_interval_days", 7)))
+        try:
+            base = datetime.fromisoformat(str(getattr(self._settings, "last_backup_at", "")))
+        except ValueError:
+            base = datetime.now()
+        self._lbl_next_backup.setText("预计下次备份日期：" + (base + timedelta(days=interval)).strftime("%Y-%m-%d"))
+
+    def _open_backup_dir(self) -> None:
+        directory = self._backup.backup_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
+
+    def _open_project_document(self, relative: str) -> None:
+        QDesktopServices.openUrl(QUrl(REPOSITORY_URL.rstrip("/") + "/blob/main/" + relative))
+
     def _on_backup_changed(self, text: str) -> None:
         if text == "自定义…":
             from PySide6.QtWidgets import QInputDialog
@@ -662,9 +729,11 @@ class SettingsWidget(QWidget):
 
     def _on_scheduled_backup_toggled(self, enabled: bool) -> None:
         self._pending_backup_settings["scheduled_backup_enabled"] = enabled
+        self._refresh_next_backup_label()
 
     def _on_backup_interval_changed(self, value: int) -> None:
         self._pending_backup_settings["backup_interval_days"] = value
+        self._refresh_next_backup_label()
 
     def _on_backup_cleanup_toggled(self, enabled: bool) -> None:
         self._pending_backup_settings["backup_auto_cleanup"] = enabled
@@ -676,10 +745,12 @@ class SettingsWidget(QWidget):
         self._backup.keep = int(pending["backup_count"])
         self._backup.auto_cleanup = bool(pending["backup_auto_cleanup"])
         self._lbl_backup_status.setProperty("role", "success")
+        self._lbl_backup_status.setVisible(True)
         self._lbl_backup_status.setText(
             "备份设置已保存："
             + (f"每 {pending['backup_interval_days']} 天定期备份。" if pending["scheduled_backup_enabled"] else "已关闭定期备份。")
         )
+        self._refresh_next_backup_label()
 
     def perform_managed_backup(self, scheduled: bool = False) -> tuple[bool, str]:
         """Back up every file managed by this app, including display metadata."""
@@ -698,8 +769,10 @@ class SettingsWidget(QWidget):
         else:
             message += "未启用旧备份清理。"
         self._lbl_backup_status.setProperty("role", "success" if saved else "warning")
+        self._lbl_backup_status.setVisible(True)
         self._lbl_backup_status.setText(message if not scheduled else f"定期备份：{message}")
         self._refresh_backup_versions(force=True)
+        self._refresh_next_backup_label()
         return True, message
 
     def _on_backup_now(self) -> None:
@@ -708,6 +781,7 @@ class SettingsWidget(QWidget):
     def _on_check_update(self) -> None:
         self._btn_check_update.setEnabled(False)
         self._lbl_update_status.setProperty("role", "info")
+        self._lbl_update_status.setVisible(True)
         self._lbl_update_status.setText("正在检查更新…")
         self._update_poll.start()
         threading.Thread(
@@ -739,6 +813,7 @@ class SettingsWidget(QWidget):
 
     def _on_update_finished(self, ok: bool, message: str, restart: bool) -> None:
         self._lbl_update_status.setProperty("role", "success" if ok else "warning")
+        self._lbl_update_status.setVisible(True)
         self._lbl_update_status.setText(message)
         self._btn_check_update.setEnabled(True)
         if restart:
@@ -829,10 +904,12 @@ class SettingsWidget(QWidget):
         if ok and companion_backup is not None:
             self._backup.restore(str(companion_backup), "pinyin_display.ini")
         if ok:
+            self._lbl_backup_status.setVisible(True)
             self._lbl_backup_status.setText(f"已恢复：{filename}")
             self.rimeDirChanged.emit(self._settings.rime_dir)
             self._refresh_backup_versions(force=True)
         else:
+            self._lbl_backup_status.setVisible(True)
             self._lbl_backup_status.setText("恢复失败：备份文件不存在或无法读取。")
 
     def _on_browse(self) -> None:

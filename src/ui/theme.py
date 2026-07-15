@@ -36,6 +36,7 @@ THEME_TOKENS: dict[str, dict[str, str]] = {
         "@BG_ACTIVE_NAV@": "#E6F0F9",
         "@BORDER@": "#E5E5E5",
         "@BORDER_STRONG@": "#D8D8D8",
+        "@TABLE_GRID@": "#CDD2D7",
         "@TEXT_PRIMARY@": "#1B1B1B",
         "@TEXT_SECONDARY@": "#5A6066",
         "@TEXT_MUTED@": "#8A8A8A",
@@ -58,8 +59,8 @@ THEME_TOKENS: dict[str, dict[str, str]] = {
         "@CONFLICT_BORDER@": "#F2D69A",
         "@CONFLICT_TEXT@": "#B26A00",
         "@SEAL@": "",
-        "@FONT_UI@": '"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif',
-        "@FONT_HEADING@": '"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif',
+        "@FONT_UI@": '"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif',
+        "@FONT_HEADING@": '"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif',
         "@FONT_MONO@": '"Cascadia Code","Consolas",monospace',
     },
     "dark": {
@@ -71,6 +72,7 @@ THEME_TOKENS: dict[str, dict[str, str]] = {
         "@BG_ACTIVE_NAV@": "#243245",
         "@BORDER@": "#2E2E2E",
         "@BORDER_STRONG@": "#33373B",
+        "@TABLE_GRID@": "#464D55",
         "@TEXT_PRIMARY@": "#ECECEC",
         "@TEXT_SECONDARY@": "#9AA0A6",
         "@TEXT_MUTED@": "#74797F",
@@ -93,8 +95,8 @@ THEME_TOKENS: dict[str, dict[str, str]] = {
         "@CONFLICT_BORDER@": "#6B4F26",
         "@CONFLICT_TEXT@": "#E0A030",
         "@SEAL@": "",
-        "@FONT_UI@": '"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif',
-        "@FONT_HEADING@": '"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",sans-serif',
+        "@FONT_UI@": '"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif',
+        "@FONT_HEADING@": '"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif',
         "@FONT_MONO@": '"Cascadia Code","Consolas",monospace',
     },
     "ink": {
@@ -106,6 +108,7 @@ THEME_TOKENS: dict[str, dict[str, str]] = {
         "@BG_ACTIVE_NAV@": "#2F5D50",
         "@BORDER@": "#D8CDB8",
         "@BORDER_STRONG@": "#CDBE9F",
+        "@TABLE_GRID@": "#D8CDB8",
         "@TEXT_PRIMARY@": "#2B2620",
         "@TEXT_SECONDARY@": "#7A6E52",
         "@TEXT_MUTED@": "#A1916F",
@@ -128,8 +131,8 @@ THEME_TOKENS: dict[str, dict[str, str]] = {
         "@CONFLICT_BORDER@": "#E6B4A6",
         "@CONFLICT_TEXT@": "#B23A2E",
         "@SEAL@": "#B23A2E",
-        "@FONT_UI@": '"Microsoft YaHei","PingFang SC",sans-serif',
-        "@FONT_HEADING@": '"Source Han Serif SC","Noto Serif SC","SimSun",serif',
+        "@FONT_UI@": '"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif',
+        "@FONT_HEADING@": '"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",sans-serif',
         "@FONT_MONO@": '"Cascadia Code","Consolas",monospace',
     },
 }
@@ -177,13 +180,13 @@ def apply_theme(theme: str) -> None:
         return
     app.setStyleSheet(load_theme_qss(_current_theme))
 
-    # 水墨装饰：仅 ink 主题显示，切走隐藏（零抖动）
+    # 水墨仅保留贴边细线；朱砂印章会遮挡左上角的选项卡和检索区，始终隐藏。
     is_ink = (theme == "ink")
-    for widget in (_INK_DECOR, _INK_SEAL):
+    for widget, visible in ((_INK_DECOR, is_ink), (_INK_SEAL, False)):
         if widget is None:
             continue
         try:
-            widget.setHidden(not is_ink)
+            widget.setHidden(not visible)
         except RuntimeError:
             # 控件可能已随窗口销毁，残留引用忽略
             pass

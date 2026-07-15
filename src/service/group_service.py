@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from src.config.paths import group_sidecar_path, user_config_dir
+from src.utils.encoding import write_text_utf8
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -119,13 +120,12 @@ class GroupService:
         if not self._enabled:
             return
         try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(
+            write_text_utf8(
+                self._path,
                 json.dumps(
                     {"groups": self._state.groups, "membership": self._state.membership},
                     ensure_ascii=False, indent=2,
                 ),
-                encoding="utf-8",
             )
             self._cache.update(self._path)
         except Exception as exc:

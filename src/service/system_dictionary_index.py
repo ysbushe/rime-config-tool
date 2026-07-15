@@ -229,30 +229,27 @@ class SystemDictionaryIndex:
 
     @staticmethod
     def _read_entries(path: Path, source: str, quality: float):
+        """Yield rows while reading, avoiding a second full dictionary copy in memory."""
         try:
-            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+            handle = path.open("r", encoding="utf-8", errors="ignore")
         except OSError:
-            return []
-        in_data = False
-        rows = []
-        for line in lines:
-            if line.strip() == "...":
-                in_data = True
-                continue
-            if not in_data:
-                continue
-            if not line or line.lstrip().startswith("#"):
-                continue
-            parts = line.split("\t")
-            if len(parts) < 2:
-                continue
-            # Dictionary source uses space-separated syllables, while Rime input is contiguous.
-            text, code = parts[0].strip(), raw_code(parts[1].strip()).replace(" ", "")
-            if not text or not code:
-                continue
-            try:
-                weight = int(parts[2].strip()) if len(parts) > 2 and parts[2].strip() else None
-            except ValueError:
-                weight = None
-            rows.append((text, code, source, weight, quality))
-        return rows
+            return
+        with handle:
+            in_data = False
+            for line in handle:
+                if line.strip() == "...":
+                    in_data = True
+                    continue
+                if not in_data or not line or line.lstrip().startswith("#"):
+                    continue
+                parts = line.rstrip("\r\n").split("\t")
+                if len(parts) < 2:
+                    continue
+                text, code = parts[0].strip(), raw_code(parts[1].strip()).replace(" ", "")
+                if not text or not code:
+                    continue
+                try:
+                    weight = int(parts[2].strip()) if len(parts) > 2 and parts[2].strip() else None
+                except ValueError:
+                    weight = None
+                yield (text, code, source, weight, quality)

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QTimer
+from src.ui.dialog_workbench import dialog_section
+
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -22,16 +24,20 @@ class DeleteConfirmDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setObjectName("AppDialog")
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumWidth(420)
 
         root = QVBoxLayout(self)
-        root.setSpacing(16)
+        root.setContentsMargins(18, 16, 18, 16)
+        root.setSpacing(12)
 
-        label = QLabel(message)
+        message_section, message_layout = dialog_section(self, "确认操作")
+        label = QLabel(message, message_section)
         label.setWordWrap(True)
-        root.addWidget(label)
+        message_layout.addWidget(label)
+        root.addWidget(message_section)
 
         actions = QHBoxLayout()
         actions.setSpacing(12)
