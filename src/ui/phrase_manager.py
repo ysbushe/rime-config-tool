@@ -948,7 +948,7 @@ class PhraseManager(QWidget):
             prefill_text=prefill_text, groups=self._groups.list_groups(),
             pinyin=self._pinyin, repo=self._repo, system_dictionary_index=self._system_dictionary_index,
             rime_preview_service=self._rime_preview_service,
-            create_group=self._groups.add_group, notice=notice, parent=self,
+            create_group=self._groups.add_group, notice=notice, parent=None,
         )
         if dlg.exec() == dlg.DialogCode.Accepted:
             vals = dlg.get_values()

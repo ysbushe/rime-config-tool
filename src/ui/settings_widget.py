@@ -544,11 +544,7 @@ class SettingsWidget(QWidget):
                 control.blockSignals(False)
         self._refresh_next_backup_label()
         # Refreshing a persisted checkbox must not invoke its system action.
-        self._cb_autostart.blockSignals(True)
-        try:
-            self._cb_autostart.setChecked(self._autostart.enabled)
-        finally:
-            self._cb_autostart.blockSignals(False)
+        self.sync_autostart_state()
 
         # 主题：按内部值 light/dark/ink 定位，仅刷新卡片选中态，不触发切换信号。
         self._set_theme_cards(self._settings.theme)
@@ -952,6 +948,18 @@ class SettingsWidget(QWidget):
         if hasattr(self, "sandboxToggled"):
             self.sandboxToggled.emit(checked)  # type: ignore
 
+
+    def sync_autostart_state(self) -> bool:
+        """Refresh the checkbox from the validated Windows startup entry."""
+        enabled = self._autostart.enabled
+        self._cb_autostart.blockSignals(True)
+        try:
+            self._cb_autostart.setChecked(enabled)
+        finally:
+            self._cb_autostart.blockSignals(False)
+        self._settings.autostart = enabled
+        return enabled
+
     def _on_autostart_toggled(self, checked: bool) -> None:
         if checked:
             ok = self._autostart.enable()
@@ -966,8 +974,12 @@ class SettingsWidget(QWidget):
                 return
             self._settings.autostart = True
         else:
-            self._autostart.disable()
+            if not self._autostart.disable():
+                self.sync_autostart_state()
+                QMessageBox.warning(self, "开机自启", "关闭开机自启失败，请检查启动文件夹权限。")
+                return
             self._settings.autostart = False
+        self.sync_autostart_state()
 
     def _on_deploy(self) -> None:
         ok, msg = self._deploy.deploy()

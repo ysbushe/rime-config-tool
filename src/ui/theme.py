@@ -2,8 +2,8 @@
 
 - 三套皮肤共用一份 ``application.qss`` 模板，色值/字体写成 ``@TOKEN@`` 占位符；
 - 切换时按当前主题令牌字典做字符串替换后再 ``setStyleSheet``，改一处全局生效；
-- 将相对 ``url(check.svg)`` 替换为绝对 file URI，确保勾选白勾在源码运行与
-  PyInstaller 打包后均能加载；
+- 将相对 ``url(check.svg)`` 替换为 Qt 内置资源 URI，确保勾选白勾在源码运行、
+  PyInstaller 打包、以及程序被移动到中文路径后均能加载；
 - ``apply_theme`` 作用于整个 ``QApplication``，使之后打开的弹窗自动继承当前主题；
 - 水墨(ink)皮肤额外显隐 MainWindow 注册的常驻装饰控件（渐变条 + 朱砂印章）。
 
@@ -12,13 +12,31 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QColor, QPalette
+from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
-_UI_DIR = Path(__file__).resolve().parent
+from src.ui._theme_template import QSS_TEMPLATE
+from src.ui import _rimeconfig_resources  # noqa: F401 - registers :/rimeconfig resources
+
+def _ui_resource_dir() -> Path:
+    """Return the UI resource directory in source and both PyInstaller layouts."""
+    roots = []
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        roots.append(Path(bundle_root))
+    if getattr(sys, "frozen", False):
+        roots.append(Path(sys.executable).resolve().parent)
+    for root in roots:
+        for bundled_ui in (root / "src" / "ui", root / "_internal" / "src" / "ui"):
+            if bundled_ui.is_dir():
+                return bundled_ui
+    return Path(__file__).resolve().parent
+
 
 # 单模板：三套皮肤共用一份（占位符在切换时注入）
 _TEMPLATE = "application.qss"
@@ -143,24 +161,77 @@ _current_tokens = THEME_TOKENS["light"]
 # 水墨装饰控件引用（由 MainWindow 通过 set_ink_decor 注册）
 _INK_DECOR = None
 _INK_SEAL = None
+_DIALOG_BACKGROUND_GUARD = None
+
+
+class _DialogBackgroundGuard(QObject):
+    """Ensure every top-level dialog paints an opaque themed surface.
+
+    Frozen Windows builds can otherwise leave a stylesheet-transparent dialog
+    unpainted, which Windows presents as a black client area. The guard runs
+    before the first show and keeps dialogs consistent with the main window.
+    """
+
+    def eventFilter(self, watched, event):  # noqa: N802 - Qt override
+        if not isinstance(watched, QDialog):
+            return super().eventFilter(watched, event)
+        if event.type() == QEvent.Type.Polish:
+            watched.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        return super().eventFilter(watched, event)
+
+
+def _install_dialog_background_guard(app: QApplication) -> None:
+    """Install the dialog paint guard once for the lifetime of the app."""
+    global _DIALOG_BACKGROUND_GUARD
+    if _DIALOG_BACKGROUND_GUARD is None:
+        _DIALOG_BACKGROUND_GUARD = _DialogBackgroundGuard(app)
+        app.installEventFilter(_DIALOG_BACKGROUND_GUARD)
 
 
 def qss_path(theme: str) -> Path:
     """返回 QSS 模板路径（单模板机制：三套皮肤共用一份，颜色经 token 注入）。"""
-    return _UI_DIR / _TEMPLATE
+    return _ui_resource_dir() / _TEMPLATE
 
 
 def load_theme_qss(theme: str) -> str:
-    """读取模板 QSS，按当前主题令牌字典替换占位符，并把 check.svg 替换为绝对 URI。"""
+    """读取模板 QSS，按当前主题令牌字典替换占位符和内置勾选图标 URI。"""
     p = qss_path(theme)
-    qss = p.read_text(encoding="utf-8")
+    qss = QSS_TEMPLATE if getattr(sys, "frozen", False) else p.read_text(encoding="utf-8")
     tokens = THEME_TOKENS.get(theme, THEME_TOKENS["light"])
     for key, value in tokens.items():
         qss = qss.replace(key, value)
-    check_svg = _UI_DIR / "check.svg"
-    if check_svg.exists():
-        qss = qss.replace("url(check.svg)", "url(%s)" % check_svg.as_uri())
+    qss = qss.replace(
+        "url(check.svg)", f"url(:/rimeconfig/check-{theme}.svg)"
+    )
+    qss = qss.replace(
+        "url(check-disabled.svg)", "url(:/rimeconfig/check-disabled.svg)"
+    )
     return qss
+
+
+def _apply_palette(app: QApplication, tokens: dict[str, str]) -> None:
+    """Set a native fallback palette for top-level dialogs and menus.
+
+    The palette keeps dialogs readable even if a Windows shell or a packaged
+    Qt style declines to paint a stylesheet-backed top-level surface.
+    """
+    palette = QPalette(app.palette())
+    colors = {
+        QPalette.ColorRole.Window: tokens["@BG_APP@"],
+        QPalette.ColorRole.WindowText: tokens["@TEXT_PRIMARY@"],
+        QPalette.ColorRole.Base: tokens["@BG_SURFACE@"],
+        QPalette.ColorRole.AlternateBase: tokens["@BG_ELEVATED@"],
+        QPalette.ColorRole.Text: tokens["@TEXT_PRIMARY@"],
+        QPalette.ColorRole.Button: tokens["@BG_SURFACE@"],
+        QPalette.ColorRole.ButtonText: tokens["@TEXT_PRIMARY@"],
+        QPalette.ColorRole.Highlight: tokens["@SELECTION_BG@"],
+        QPalette.ColorRole.HighlightedText: tokens["@SELECTION_TEXT@"],
+        QPalette.ColorRole.ToolTipBase: tokens["@BG_SURFACE@"],
+        QPalette.ColorRole.ToolTipText: tokens["@TEXT_PRIMARY@"],
+    }
+    for role, color in colors.items():
+        palette.setColor(role, QColor(color))
+    app.setPalette(palette)
 
 
 def apply_theme(theme: str) -> None:
@@ -178,6 +249,8 @@ def apply_theme(theme: str) -> None:
     app = QApplication.instance()
     if app is None:
         return
+    _install_dialog_background_guard(app)
+    _apply_palette(app, _current_tokens)
     app.setStyleSheet(load_theme_qss(_current_theme))
 
     # 水墨仅保留贴边细线；朱砂印章会遮挡左上角的选项卡和检索区，始终隐藏。

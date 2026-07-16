@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from src.service.backup_service import BackupService
 from src.ui.settings_widget import SettingsWidget
 
@@ -45,8 +47,8 @@ def test_custom_backup_directory_is_used(temp_rime_dir, tmp_path) -> None:
 
     assert saved is not None
     assert saved.parent == custom / "custom_phrase.txt"
+    assert saved.name.startswith("custom_phrase.txt_")
     assert saved.name.endswith(".bak")
-    assert len(saved.stem) == len("YYYYMMDD-HHMMSS")
     assert service.list_backups("custom_phrase.txt") == [saved]
 
 
@@ -117,6 +119,47 @@ def test_backup_cleanup_can_be_disabled(temp_rime_dir) -> None:
     service.backup("custom_phrase.txt")
     service.backup("custom_phrase.txt")
     assert len(service.list_backups("custom_phrase.txt")) == 2
+
+
+def test_backup_lists_and_restores_legacy_names(temp_rime_dir) -> None:
+    target = temp_rime_dir / "custom_phrase.txt"
+    service = BackupService(str(temp_rime_dir), keep=5)
+    nested = service.backup_dir / "custom_phrase.txt"
+    nested.mkdir(parents=True)
+    old_nested = nested / "20260715-150500.bak"
+    old_nested.write_text("旧目录备份\n", encoding="utf-8")
+    old_flat = service.backup_dir / "custom_phrase.txt.20260714-150500.bak"
+    old_flat.write_text("旧平铺备份\n", encoding="utf-8")
+    os.utime(old_nested, (2, 2))
+    os.utime(old_flat, (1, 1))
+
+    backups = service.list_backups("custom_phrase.txt")
+
+    assert backups == [old_nested, old_flat]
+    target.write_text("当前内容\n", encoding="utf-8")
+    assert service.restore(str(old_nested), "custom_phrase.txt")
+    assert target.read_text(encoding="utf-8") == "旧目录备份\n"
+
+
+def test_backup_rotation_counts_new_and_legacy_names(temp_rime_dir) -> None:
+    target = temp_rime_dir / "custom_phrase.txt"
+    service = BackupService(str(temp_rime_dir), keep=2)
+    legacy_dir = service.backup_dir / "custom_phrase.txt"
+    legacy_dir.mkdir(parents=True)
+    legacy = legacy_dir / "20260715-150500.bak"
+    legacy.write_text("旧备份\n", encoding="utf-8")
+    os.utime(legacy, (1, 1))
+
+    target.write_text("新备份一\n", encoding="utf-8")
+    first = service.backup("custom_phrase.txt")
+    target.write_text("新备份二\n", encoding="utf-8")
+    second = service.backup("custom_phrase.txt")
+
+    backups = service.list_backups("custom_phrase.txt")
+    assert first is not None and second is not None
+    assert len(backups) == 2
+    assert legacy not in backups
+    assert all(path.name.startswith("custom_phrase.txt_") for path in backups)
 
 
 def test_managed_file_open_buttons_track_file_state(qapp, temp_rime_dir) -> None:

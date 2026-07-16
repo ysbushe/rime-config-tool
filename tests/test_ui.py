@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QInputDialog
 
 from src.repo.symbols_repo import SymbolsRepo
@@ -129,7 +130,8 @@ def test_theme_switch_and_persist(tmp_path, monkeypatch) -> None:
 def test_apply_theme_sets_current_and_stylesheet(qapp) -> None:
     apply_theme("dark")
     assert current_theme() == "dark"
-    assert "file://" in qapp.styleSheet()
+    assert ":/rimeconfig/check-dark.svg" in qapp.styleSheet()
+    assert "file://" not in qapp.styleSheet()
     apply_theme("light")
     assert current_theme() == "light"
 
@@ -140,9 +142,11 @@ def test_apply_theme_sets_current_and_stylesheet(qapp) -> None:
 def test_both_themes_load_and_reference_check_svg() -> None:
     for theme in ("light", "dark"):
         qss = load_theme_qss(theme)
-        # 相对 url(check.svg) 必须被替换为绝对 file URI（确保源码运行中加载）
+        # 内置资源地址不受发布目录变化影响。
         assert "url(check.svg)" not in qss
-        assert "file://" in qss
+        assert f":/rimeconfig/check-{theme}.svg" in qss
+        assert ":/rimeconfig/check-disabled.svg" in qss
+        assert "file://" not in qss
         assert Path(qss_path(theme)).exists()
 
     light = load_theme_qss("light")
@@ -199,3 +203,12 @@ def test_result_toast_separates_phrase_and_codes(qapp) -> None:
     assert toast._detail_text.text() == "「银行」"
     assert "yin'hang" in toast._detail_codes.text()
     assert toast._detail_codes.wordWrap() is True
+
+
+def test_release_ico_is_loadable() -> None:
+    """目录式发布包和系统托盘共用的 ICO 必须能被 Qt 读取。"""
+    icon_path = Path(__file__).resolve().parent.parent / "assets" / "app.ico"
+    icon = QIcon(str(icon_path))
+    assert icon_path.is_file()
+    assert not icon.isNull()
+    assert not icon.pixmap(16, 16).isNull()

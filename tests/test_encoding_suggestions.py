@@ -10,7 +10,7 @@ from src.repo.phrase_repo import Phrase
 from src.service.pinyin_display_store import PinyinDisplayStore
 from src.service.pinyin_service import PinyinService
 from src.ui.quick_add_dialog import QuickAddDialog
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from src.ui.phrase_editor import PhraseEditor
 from src.ui.multi_code_editor import MultiCodeEditor
@@ -105,6 +105,19 @@ def test_english_suggestions_offer_case_and_compact_phrase_forms() -> None:
     ]
 
 
+def test_english_suggestion_row_uses_compact_code_and_aligned_actions(qapp) -> None:
+    from src.ui.encoding_suggestion_panel import EncodingSuggestionOption
+
+    option = EncodingSuggestionOption("英文大写", "WORKBUDDY", "空闲", "success")
+    code = option.findChild(QLabel, "SuggestionCode")
+    state = option.findChild(QLabel, "SuggestionState")
+    buttons = option.findChildren(QPushButton, "SuggestionAdd")
+
+    assert code is not None and code.maximumWidth() == 240
+    assert state is not None and state.minimumWidth() == 62
+    assert len(buttons) == 1 and buttons[0].minimumWidth() == 70
+
+
 def test_suggestion_rows_expose_name_code_and_colored_state(qapp, phrase_repo) -> None:
     editor = PhraseEditor(repo=phrase_repo)
     editor._text.setText("银行")
@@ -129,6 +142,14 @@ def test_quick_add_collects_extra_codes(qapp) -> None:
     assert dialog._extra_code_layout.count() == len(values["additional_codes"])
     dialog._remove_code("y'h")
     assert "y'h" not in dialog.get_values()["additional_codes"]
+
+
+def test_quick_add_prefill_reserves_preview_and_suggestion_space(qapp) -> None:
+    dialog = QuickAddDialog(prefill_text="银行")
+
+    assert not dialog._preview_panel.isHidden()
+    assert dialog._suggestion_panel.minimumHeight() >= 178
+    assert dialog.sizeHint().height() >= 430
 
 
 def test_phrase_editor_collects_and_removes_extra_codes(qapp, phrase_repo) -> None:

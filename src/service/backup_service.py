@@ -1,9 +1,12 @@
 """备份服务（BackupService）。
 
 铁律：任何写文件前必走 BackupService。备份落点：
-    发布版：<用户文档>/RIME 配置小工具/Backups/<filename>/<YYYYMMDD-HHMMSS>.bak
-    源码运行：<rime_dir>/.backup/<filename>/<YYYYMMDD-HHMMSS>.bak
+    发布版：<用户文档>/RIME 配置小工具/Backups/<filename>/<filename>_<YYYYMMDD_HHMMSS>.bak
+    源码运行：<rime_dir>/.backup/<filename>/<filename>_<YYYYMMDD_HHMMSS>.bak
 每文件独立轮转，保留近 N 份（默认 5）。
+
+历史备份兼容：同目录的旧短时间戳文件，以及旧版平铺保存的
+``<filename>.*.bak`` 文件，均可列出、恢复和参与轮转。
 """
 from __future__ import annotations
 
@@ -97,15 +100,15 @@ class BackupService:
             logger.info("源文件不存在，跳过备份：%s", src)
             return None
 
-        # Each managed file has its own folder, so users see short, sortable
-        # timestamps instead of implementation-oriented file names.
+        # Keep each managed file in its own folder and retain its source name
+        # in the backup file, so the backup remains recognizable if copied out.
         target_dir = self._backup_dir / filename
         target_dir.mkdir(parents=True, exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-        dest = target_dir / f"{ts}.bak"
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        dest = target_dir / f"{filename}_{ts}.bak"
         suffix = 2
         while dest.exists():
-            dest = target_dir / f"{ts}-{suffix}.bak"
+            dest = target_dir / f"{filename}_{ts}_{suffix}.bak"
             suffix += 1
         try:
             copy2(src, dest)
@@ -130,10 +133,7 @@ class BackupService:
 
     def _rotate(self, filename: str) -> list[Path]:
         """保留最近 keep 份，删除更早的。"""
-        backups = sorted(
-            [*(self._backup_dir / filename).glob("*.bak"), *self._backup_dir.glob(f"{filename}.*.bak")],
-            key=lambda p: p.stat().st_mtime,
-        )
+        backups = list(reversed(self.list_backups(filename)))
         excess = len(backups) - self._keep
         # 关键：文件数未超过保留份数（excess <= 0）时绝不删除，
         # 否则 Python 切片 backups[:-1] 会误删除最后一份外的所有文件。
@@ -153,9 +153,14 @@ class BackupService:
     # 回滚辅助
     # ------------------------------------------------------------------ #
     def list_backups(self, filename: str) -> List[Path]:
-        """返回某文件的所有备份（最新在前）。"""
+        """返回某文件的所有备份（最新在前），兼容历史命名。"""
+        # Nested files cover both the new ``filename_YYYYMMDD_HHMMSS.bak``
+        # form and all former timestamp-only names. The flat pattern preserves
+        # compatibility with releases that stored backups directly at root.
+        nested = (self._backup_dir / filename).glob("*.bak")
+        legacy_flat = self._backup_dir.glob(f"{filename}.*.bak")
         return sorted(
-            [*(self._backup_dir / filename).glob("*.bak"), *self._backup_dir.glob(f"{filename}.*.bak")],
+            [*nested, *legacy_flat],
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -163,7 +168,13 @@ class BackupService:
     def restore(self, backup_path: str, filename: str) -> bool:
         """从备份恢复（恢复前建议再备份当前版本）。"""
         src = Path(backup_path)
-        if not src.exists():
+        if not src.is_file():
+            return False
+        # Restore only from a recognized backup of this managed file. This
+        # keeps the new and legacy naming rules safe without trusting a path
+        # passed from outside the backup list.
+        known_paths = {path.resolve() for path in self.list_backups(filename)}
+        if src.resolve() not in known_paths:
             return False
         copy2(src, self._rime_dir / filename)
         logger.info("已从备份恢复：%s -> %s", src, self._rime_dir / filename)

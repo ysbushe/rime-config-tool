@@ -32,7 +32,7 @@
 
 关闭窗口后程序仍驻留系统托盘。托盘菜单可显示主窗口、立即重新部署、切换保存后自动部署和开机自启。
 
-“检查更新”只适用于单文件 `RimeConfig.exe` 发布包。目录式便携包请从 GitHub Releases 下载 `RimeConfig-portable.zip`，解压后运行其中的 `RimeConfig.exe`。
+“检查更新”会自动识别当前运行的是单文件 `RimeConfig.exe` 还是目录式便携包：前者只下载并替换 EXE，后者只下载 `RimeConfig-portable.zip` 并整体替换程序目录。更新失败会自动恢复旧版本。
 
 ## 主题与数据位置
 

@@ -252,7 +252,7 @@ QCheckBox::indicator:disabled:checked {
     background-color: @BORDER_STRONG@;
     border: 1px solid @BORDER_STRONG@;
     border-radius: 4px;
-    image: url(check.svg);
+    image: url(check-disabled.svg);
 }
 
 /* 表格内 item 复选框（最左『选择』列）：原生小方块 → 真对勾 */
@@ -284,7 +284,7 @@ QTableView::indicator:disabled:checked {
     background-color: @BORDER_STRONG@;
     border: 1px solid @BORDER_STRONG@;
     border-radius: 4px;
-    image: url(check.svg);
+    image: url(check-disabled.svg);
 }
 
 /* ---------- 选项卡（若使用 QTabWidget） ---------- */

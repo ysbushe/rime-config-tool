@@ -1,14 +1,14 @@
 """Clickable encoding suggestions with inline duplicate-code weight editing."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
-from src.encoding.code_suggestions import build_suggestions, normalize_display_code, raw_code
+from src.encoding.code_suggestions import EncodingSuggestion, build_suggestions, normalize_display_code, raw_code
 from src.repo.phrase_repo import PhraseRepo
 from src.service.pinyin_service import PinyinService
 from src.ui.click_activated_spin import ClickActivatedSpinBox
@@ -28,24 +28,35 @@ class EncodingSuggestionOption(QFrame):
         self.setProperty("selected", False)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        row = QHBoxLayout(self)
+        row = QGridLayout(self)
         row.setContentsMargins(10, 7, 10, 7)
-        row.setSpacing(12)
+        row.setHorizontalSpacing(12)
+        row.setVerticalSpacing(0)
+        row.setColumnMinimumWidth(0, 86)
+        row.setColumnStretch(1, 1)
+        row.setColumnMinimumWidth(2, 62)
+        row.setColumnMinimumWidth(3, 70)
         name = QLabel(label)
         name.setObjectName("SuggestionName")
+        name.setFixedWidth(86)
         code_label = QLabel(code)
         code_label.setObjectName("SuggestionCode")
+        if label.startswith("英文") or label == "原样保留":
+            code_label.setMaximumWidth(240)
         status = QLabel(state)
         status.setObjectName("SuggestionState")
         status.setProperty("role", state_role)
-        row.addWidget(name, 0)
-        row.addWidget(code_label, 1)
+        status.setFixedWidth(62)
+        status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         add = QPushButton("增加")
         add.setObjectName("SuggestionAdd")
+        add.setFixedWidth(70)
         add.setToolTip("将该编码加入本次收藏，可一次保存多个编码")
         add.clicked.connect(lambda: self.addRequested.emit(self._code))
-        row.addWidget(status, 0)
-        row.addWidget(add, 0)
+        row.addWidget(name, 0, 0)
+        row.addWidget(code_label, 0, 1)
+        row.addWidget(status, 0, 2)
+        row.addWidget(add, 0, 3)
 
     def set_selected(self, selected: bool) -> None:
         self.setProperty("selected", selected)
@@ -81,6 +92,8 @@ class EncodingSuggestionPanel(QWidget):
         self._excluded_codes: set[str] = set()
         self._weight_edits: dict[str, int] = {}
         self._buttons: list[EncodingSuggestionOption] = []
+        self._prepared_suggestions: list[EncodingSuggestion] | None = None
+        self._conflicts_by_code: dict[str, list] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -88,6 +101,9 @@ class EncodingSuggestionPanel(QWidget):
         self._suggestions = QVBoxLayout()
         self._suggestions.setSpacing(5)
         root.addLayout(self._suggestions)
+        self._loading = QLabel("正在准备编码建议…")
+        self._loading.setProperty("role", "info")
+        root.addWidget(self._loading)
 
         self._conflict = QFrame()
         self._conflict.setObjectName("ConflictPanel")
@@ -104,9 +120,31 @@ class EncodingSuggestionPanel(QWidget):
         conflict_layout.addWidget(self._weight_hint)
         root.addWidget(self._conflict)
         self._conflict.hide()
+        # Four candidate rows are the normal shape. Keeping this space avoids
+        # shifting every control below the panel when asynchronous results arrive.
+        self.setMinimumHeight(178)
 
     def set_text(self, text: str) -> None:
         self._text = (text or "").strip()
+        self._prepared_suggestions = None
+        self._conflicts_by_code = self._index_conflicts(self._repo.all() if self._repo else [])
+        self._rebuild_suggestions()
+
+    def set_loading(self, text: str) -> None:
+        self._text = (text or "").strip()
+        self._prepared_suggestions = None
+        self._clear_layout(self._suggestions)
+        self._buttons = []
+        self._conflict.hide()
+        self._loading.setVisible(bool(self._text))
+
+    def set_prepared_suggestions(
+            self, text: str, suggestions: Iterable[EncodingSuggestion],
+            conflicts_by_code: dict[str, list] | None = None) -> None:
+        self._text = (text or "").strip()
+        self._prepared_suggestions = list(suggestions)
+        self._conflicts_by_code = conflicts_by_code or {}
+        self._loading.hide()
         self._rebuild_suggestions()
 
     def select_code(self, display_code: str) -> None:
@@ -135,7 +173,11 @@ class EncodingSuggestionPanel(QWidget):
     def _rebuild_suggestions(self) -> None:
         self._clear_layout(self._suggestions)
         self._buttons = []
-        for suggestion in build_suggestions(self._text, self._pinyin):
+        suggestions = self._prepared_suggestions
+        if suggestions is None:
+            suggestions = build_suggestions(self._text, self._pinyin)
+        self._loading.setVisible(not bool(suggestions) and bool(self._text))
+        for suggestion in suggestions:
             if suggestion.raw_code in self._excluded_codes:
                 continue
             conflicts = self._conflicts_for(suggestion.raw_code)
@@ -161,10 +203,18 @@ class EncodingSuggestionPanel(QWidget):
         self.select_code(display_code)
 
     def _conflicts_for(self, code: str):
-        if self._repo is None or not code:
+        if not code:
             return []
-        stored = raw_code(code)
-        return [p for p in self._repo.all() if raw_code(p.code) == stored]
+        return self._conflicts_by_code.get(raw_code(code), [])
+
+    @staticmethod
+    def _index_conflicts(phrases) -> dict[str, list]:
+        indexed: dict[str, list] = {}
+        for phrase in phrases:
+            code = raw_code(phrase.code)
+            if code:
+                indexed.setdefault(code, []).append(phrase)
+        return indexed
 
     def _rebuild_conflicts(self) -> None:
         self._clear_layout(self._grid)

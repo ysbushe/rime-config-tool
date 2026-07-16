@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 from typing import List, Optional
+import queue
 import re
+import threading
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
@@ -65,6 +67,10 @@ class QuickAddDialog(QDialog):
         self._prev_index = 0                        # 进入自定义前的下拉索引
         self._suppress = False                      # 防止程序化回退触发二次弹窗
         self._additional_codes: list[str] = []
+        self._prefill_initialization_pending = bool(prefill_text)
+        self._suggestion_generation = 0
+        self._suggestion_results: queue.SimpleQueue = queue.SimpleQueue()
+        self._pending_suggestion_generations: set[int] = set()
         self._build_ui()
         # 冲突区按需展开，窗口保留可缩放能力。
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -75,13 +81,22 @@ class QuickAddDialog(QDialog):
         self._auto_close = False
         self._remaining = 5
         self._timer = QTimer(self)
+        self._suggestion_result_timer = QTimer(self)
+        self._suggestion_result_timer.setInterval(8)
+        self._suggestion_result_timer.timeout.connect(self._apply_prepared_suggestions)
         self._dictionary_timer = QTimer(self)
         self._dictionary_timer.setInterval(450)
         self._dictionary_timer.timeout.connect(self._refresh_dictionary_hint)
         self._timer.timeout.connect(self._tick)
         if prefill_text:
             self._text.setText(prefill_text)
-            self._update_code()
+            # A ready index lookup is small and preserves the immediate
+            # system-dictionary hint; pinyin and Rime preview stay deferred.
+            if self._system_dictionary_index is not None and self._system_dictionary_index.state == "ready":
+                self._refresh_dictionary_hint()
+            # Show the capture shell first; suggestions and preview can arrive
+            # on the next event-loop turn without delaying the hotkey popup.
+            QTimer.singleShot(0, self._initialize_prefill)
         if notice:
             self.set_notice(notice)
         if self._auto_close:
@@ -91,11 +106,16 @@ class QuickAddDialog(QDialog):
             self._countdown.hide()
 
         # 焦点：有捕获文本 → 编码（便于校正）；无捕获 → 文本框
-        if prefill_text:
-            self._code.setFocus()
-            self._code.selectAll()
-        else:
+        if not prefill_text:
             self._text.setFocus()
+
+    def _initialize_prefill(self) -> None:
+        if not self._prefill_initialization_pending:
+            return
+        self._prefill_initialization_pending = False
+        self._update_code()
+        self._code.setFocus()
+        self._code.selectAll()
 
     # ------------------------------------------------------------------ #
     def _build_ui(self) -> None:
@@ -104,6 +124,7 @@ class QuickAddDialog(QDialog):
         layout.setSpacing(12)
         self._preview_panel = RimePreviewPanel(
             self._rime_preview_service, self._system_dictionary_index, self._repo, self,
+            reserve_space=True,
         )
         layout.addWidget(self._preview_panel)
         form = QFormLayout()
@@ -239,12 +260,58 @@ class QuickAddDialog(QDialog):
         self._info.show()
 
     def _update_code(self) -> None:
-        """文本变化时刷新建议，并默认选用带边界的全拼。"""
+        """文本变化时异步刷新建议，避免阻塞采集窗首次显示。"""
         text = self._text.text().strip()
         self._update_english_output_option(text)
-        self._suggestion_panel.set_text(text)
+        self._queue_suggestion_refresh(text)
+
+    def _queue_suggestion_refresh(self, text: str) -> None:
+        self._suggestion_generation += 1
+        generation = self._suggestion_generation
+        text = (text or "").strip()
+        self._suggestion_panel.set_loading(text)
+        if not text:
+            self._code.clear()
+            self._refresh_dictionary_hint()
+            self._request_rime_preview()
+            return
+        self._pending_suggestion_generations.add(generation)
+        self._suggestion_result_timer.start()
+        threading.Thread(
+            target=self._prepare_suggestions,
+            args=(generation, text), daemon=True, name="quick-add-suggestions",
+        ).start()
+
+    def _prepare_suggestions(self, generation: int, text: str) -> None:
+        """Prepare pinyin and duplicate state away from Qt's event loop."""
+        try:
+            suggestions = build_suggestions(text, PinyinService())
+            conflicts: dict[str, list] = {}
+            if self._repo is not None:
+                for phrase in self._repo.all():
+                    code = raw_code(phrase.code)
+                    if code:
+                        conflicts.setdefault(code, []).append(phrase)
+            self._suggestion_results.put((generation, text, suggestions, conflicts))
+        except Exception:
+            self._suggestion_results.put((generation, text, [], {}))
+
+    def _apply_prepared_suggestions(self) -> None:
+        while True:
+            try:
+                generation, text, suggestions, conflicts = self._suggestion_results.get_nowait()
+            except queue.Empty:
+                break
+            self._pending_suggestion_generations.discard(generation)
+            if generation != self._suggestion_generation or text != self._text.text().strip():
+                continue
+            self._apply_suggestions(text, suggestions, conflicts)
+        if not self._pending_suggestion_generations:
+            self._suggestion_result_timer.stop()
+
+    def _apply_suggestions(self, text: str, suggestions, conflicts: dict[str, list]) -> None:
+        self._suggestion_panel.set_prepared_suggestions(text, suggestions, conflicts)
         if text:
-            suggestions = build_suggestions(text, self._pinyin)
             self._code.setText(
                 suggestions[0].display_code if suggestions
                 else self._pinyin.get_full_pinyin(text)
@@ -483,6 +550,12 @@ class QuickAddDialog(QDialog):
 
     # ------------------------------------------------------------------ #
     def get_values(self) -> dict:
+        self._initialize_prefill()
+        # Tests and an immediate keyboard save can arrive before the worker result.
+        # Keep saving deterministic without making normal popup display wait.
+        if self._text.text().strip() and not self._code.text().strip():
+            text = self._text.text().strip()
+            self._apply_suggestions(text, build_suggestions(text, self._pinyin), {})
         stored_text, display_code = self._stored_text_and_display_code()
         return {
             "text": stored_text,

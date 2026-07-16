@@ -1,0 +1,8 @@
+<!DOCTYPE RCC><RCC version="1.0">
+  <qresource prefix="/rimeconfig">
+    <file>check-light.svg</file>
+    <file>check-dark.svg</file>
+    <file>check-ink.svg</file>
+    <file>check-disabled.svg</file>
+  </qresource>
+</RCC>

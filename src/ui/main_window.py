@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -72,7 +73,7 @@ class MainWindow(QMainWindow):
         # Normal launches warm optional services after first paint. Autostart waits
         # until the user actually opens the window, keeping Windows login light.
         if not self._start_minimized:
-            QTimer.singleShot(650, self._start_optional_services)
+            QTimer.singleShot(800, self._start_optional_services)
 
     # ------------------------------------------------------------------ #
     # 样式
@@ -143,39 +144,51 @@ class MainWindow(QMainWindow):
         self._position_ink_decor()
 
     # ------------------------------------------------------------------ #
-    # 应用图标（程序化生成，托盘与主窗口共用，不依赖外部文件）
+    # 应用图标（优先使用随包 ICO；程序化图标仅作资源缺失时的后备）
     # ------------------------------------------------------------------ #
     def _set_app_icon(self) -> None:
-        icon = self._make_default_icon()
-        # 若 assets/app.ico 存在则优先使用
-        try:
-            from PySide6.QtGui import QIcon
+        from PySide6.QtGui import QIcon
 
-            icon_path = Path(__file__).resolve().parent.parent.parent / "assets" / "app.ico"
-            if icon_path.exists():
-                icon = QIcon(str(icon_path))
-        except Exception:
-            pass
+        icon_path = self._app_icon_path()
+        icon = QIcon(str(icon_path)) if icon_path is not None else QIcon()
+        if icon.isNull():
+            icon = self._make_default_icon()
+        QApplication.instance().setWindowIcon(icon)
         self.setWindowIcon(icon)
         self._app_icon = icon
+
+    @staticmethod
+    def _app_icon_path() -> Path | None:
+        """Find the bundled ICO without depending on the launch directory."""
+        bundle_root = getattr(sys, "_MEIPASS", None)
+        candidates = []
+        if bundle_root:
+            candidates.append(Path(bundle_root) / "assets" / "app.ico")
+        candidates.append(Path(__file__).resolve().parents[2] / "assets" / "app.ico")
+        return next((path for path in candidates if path.is_file()), None)
 
     def _make_default_icon(self) -> "QIcon":
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 
-        size = 64
-        pm = QPixmap(size, size)
-        pm.fill(QColor(0, 0, 0, 0))
-        p = QPainter(pm)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setBrush(QColor("#185FA5"))
-        p.setPen(Qt.PenStyle.NoPen)
-        p.drawRoundedRect(6, 6, size - 12, size - 12, 14, 14)
-        p.setPen(QColor("#FFFFFF"))
-        p.setFont(QFont("Microsoft YaHei UI", 34, QFont.Weight.Bold))
-        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "R")
-        p.end()
-        return QIcon(pm)
+        icon = QIcon()
+        for size in (16, 20, 24, 32, 48, 64, 128, 256):
+            pm = QPixmap(size, size)
+            pm.fill(QColor(0, 0, 0, 0))
+            painter = QPainter(pm)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            margin = max(1, round(size * 0.09))
+            painter.setBrush(QColor("#185FA5"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(
+                margin, margin, size - margin * 2, size - margin * 2, max(3, round(size * 0.22)), max(3, round(size * 0.22)),
+            )
+            painter.setPen(QColor("#FFFFFF"))
+            painter.setFont(QFont("Microsoft YaHei UI", max(8, round(size * 0.53)), QFont.Weight.Bold))
+            painter.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "R")
+            painter.end()
+            icon.addPixmap(pm)
+        return icon
 
     # ------------------------------------------------------------------ #
     # 顶部选项卡 + 堆叠页
@@ -222,10 +235,12 @@ class MainWindow(QMainWindow):
         self._tray.action_deploy.triggered.connect(self.deploy_now)
         self._tray.action_auto_deploy.triggered.connect(self._toggle_auto_deploy_from_tray)
         self._tray.action_hotkey.triggered.connect(self._toggle_hotkey_from_tray)
+        self._tray.action_autostart.triggered.connect(self._toggle_autostart_from_tray)
         self._tray.action_settings.triggered.connect(self._open_settings_from_tray)
         self._tray.action_quit.triggered.connect(self.quit_app)
         self._tray.set_hotkey_state(self._ctx.settings.hotkey_enabled)
         self._tray.set_auto_deploy_state(self._ctx.settings.auto_deploy)
+        self._sync_autostart_state()
         self._tray.show()
 
     # ------------------------------------------------------------------ #
@@ -277,6 +292,21 @@ class MainWindow(QMainWindow):
 
     def _on_edit_completed(self, ok: bool, message: str) -> None:
         self._show_result_bubble(ok, message)
+
+    def _sync_autostart_state(self) -> bool:
+        enabled = self._ctx.autostart.enabled
+        self._ctx.settings.autostart = enabled
+        if hasattr(self, "_tray"):
+            self._tray.set_autostart_state(enabled)
+        if getattr(self, "_settings_widget", None) is not None:
+            self._settings_widget.sync_autostart_state()
+        return enabled
+
+    def _toggle_autostart_from_tray(self, checked: bool) -> None:
+        ok = self._ctx.autostart.enable() if checked else self._ctx.autostart.disable()
+        enabled = self._sync_autostart_state()
+        if not ok or enabled != checked:
+            self._show_result_bubble(False, "开机自启动设置失败，请检查启动文件夹权限。")
 
     def _toggle_hotkey_from_tray(self) -> None:
         enabled = not self._ctx.settings.hotkey_enabled
@@ -366,9 +396,10 @@ class MainWindow(QMainWindow):
     # 自启
     # ------------------------------------------------------------------ #
     def _wire_autostart(self) -> None:
-        # 启动时按设置同步：若设置开启但快捷方式缺失则补建
+        # A checked persisted setting repairs a missing/stale managed shortcut.
         if self._ctx.settings.autostart and not self._ctx.autostart.enabled:
             self._ctx.autostart.enable()
+        self._ctx.settings.autostart = self._ctx.autostart.enabled
 
     # ------------------------------------------------------------------ #
     # 选项卡切换
@@ -399,6 +430,7 @@ class MainWindow(QMainWindow):
         widget.sandboxToggled.connect(self._on_sandbox_toggled)
         widget.themeChanged.connect(self._on_theme_changed)
         self._settings_widget = widget
+        self._settings_widget.sync_autostart_state()
         self._replace_lazy_tab(2, widget, _TABS[2])
         return widget
 

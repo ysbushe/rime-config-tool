@@ -13,13 +13,15 @@ from src.ui.theme import accent_color
 class RimePreviewPanel(QWidget):
     """Show a compact input-method-style candidate row and its weights."""
 
-    def __init__(self, preview_service=None, dictionary_index=None, repo=None, parent=None) -> None:
+    def __init__(self, preview_service=None, dictionary_index=None, repo=None, parent=None,
+                 reserve_space: bool = False) -> None:
         super().__init__(parent)
         self.setObjectName("RimePreviewPanel")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._service = preview_service
         self._dictionary_index = dictionary_index
         self._repo = repo
+        self._reserve_space = reserve_space
         self._text = ""
         self._code = ""
         # A preview can refresh several times while the engine reports state changes.
@@ -84,7 +86,11 @@ class RimePreviewPanel(QWidget):
         self._weight_row.hide()
         # Reserve the final two-row candidate area from the first paint onward.
         self.setFixedHeight(90)
-        self.hide()
+        if self._reserve_space:
+            self._status.setText("输入法候选预览：正在准备…")
+            self._details.setText("独立预览不影响正在使用的输入法。")
+        else:
+            self.hide()
 
         self._request_timer = QTimer(self)
         self._request_timer.setSingleShot(True)
@@ -102,7 +108,10 @@ class RimePreviewPanel(QWidget):
         self._code = next_code
         if self._service is None or not self._code:
             self._request_timer.stop()
-            self.hide()
+            if self._reserve_space:
+                self._show_status("输入法候选预览：等待编码…", "编码建议准备完成后将在此显示。")
+            else:
+                self.hide()
             return
         self._show_status("输入法候选预览：正在读取…", "候选与权重将在读取完成后显示。")
         self._request_timer.start()
@@ -127,7 +136,10 @@ class RimePreviewPanel(QWidget):
 
     def _refresh(self) -> None:
         if self._service is None or not self._code:
-            self.hide()
+            if self._reserve_space:
+                self._show_status("输入法候选预览：等待编码…", "编码建议准备完成后将在此显示。")
+            else:
+                self.hide()
             return
         snapshot = self._service.snapshot
         if snapshot.code and snapshot.code != self._code:

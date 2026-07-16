@@ -14,6 +14,10 @@ a = Analysis(
     datas=[
         ("src/ui/application.qss", "src/ui"),
         ("src/ui/check.svg", "src/ui"),
+        ("src/ui/check-light.svg", "src/ui"),
+        ("src/ui/check-dark.svg", "src/ui"),
+        ("src/ui/check-ink.svg", "src/ui"),
+        ("src/ui/check-disabled.svg", "src/ui"),
         ("assets", "assets"),
     ],
     hiddenimports=[

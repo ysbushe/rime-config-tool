@@ -12,9 +12,11 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtWidgets import QFrame, QLabel
+from PySide6.QtGui import QImage, QPalette, QPixmap
+from PySide6.QtWidgets import QDialog, QFrame, QLabel
 
 from src.ui import theme
+from src.ui._theme_template import QSS_TEMPLATE
 from src.ui.theme import (
     THEME_TOKENS,
     accent_color,
@@ -58,6 +60,25 @@ def test_template_only_uses_defined_tokens() -> None:
     assert used <= defined, f"模板使用了未定义令牌: {used - defined}"
 
 
+def test_qss_path_uses_pyinstaller_bundle_ui_resources(tmp_path, monkeypatch) -> None:
+    bundled_ui = tmp_path / "src" / "ui"
+    bundled_ui.mkdir(parents=True)
+    monkeypatch.setattr(theme.sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    assert theme.qss_path("light") == bundled_ui / "application.qss"
+
+
+def test_frozen_build_uses_embedded_theme_template(tmp_path, monkeypatch) -> None:
+    """发布版不依赖可移动目录中的 QSS 文件读取。"""
+    monkeypatch.setattr(theme.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(theme.sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    css = theme.load_theme_qss("light")
+    assert "@BG_APP@" not in css
+    assert "QDialog" in css
+    assert QSS_TEMPLATE.startswith("/* RimeConfig")
+
+
 def test_apply_theme_replaces_all_placeholders(qapp) -> None:
     for name in ("light", "dark", "ink"):
         apply_theme(name)
@@ -65,9 +86,46 @@ def test_apply_theme_replaces_all_placeholders(qapp) -> None:
         # 不应残留任何 @XXX@ 占位符
         for tk in _ALL_TOKENS:
             assert tk not in css, f"{name} 主题仍有未替换占位符 {tk}"
-        # check.svg 必须替换为绝对 file URI
+        # 勾选图标必须使用不受发布目录影响的 Qt 内置资源 URI。
         assert "url(check.svg)" not in css
-        assert "file://" in css
+        assert f":/rimeconfig/check-{name}.svg" in css
+        assert ":/rimeconfig/check-disabled.svg" in css
+        assert "file://" not in css
+
+
+def test_frozen_theme_parses_after_relocation_to_unicode_path(tmp_path, monkeypatch, qapp) -> None:
+    """发布目录含中文、空格时，主题仍必须完整解析并绘制弹窗背景。"""
+    bundle_root = tmp_path / "中文 备份" / "RimeConfig" / "_internal"
+    (bundle_root / "src" / "ui").mkdir(parents=True)
+    monkeypatch.setattr(theme.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(theme.sys, "_MEIPASS", str(bundle_root), raising=False)
+
+    css = theme.load_theme_qss("light")
+    assert "file://" not in css
+    assert ":/rimeconfig/check-light.svg" in css
+    assert not QPixmap(":/rimeconfig/check-light.svg").isNull()
+
+    qapp.setStyleSheet(css)
+    dialog = QDialog()
+    dialog.resize(120, 80)
+    dialog.ensurePolished()
+    image = QImage(dialog.size(), QImage.Format.Format_ARGB32)
+    image.fill(0)
+    dialog.render(image)
+    assert image.pixelColor(4, 4).name().upper() == "#F3F3F3"
+
+
+def test_apply_theme_sets_dialog_fallback_palette(qapp) -> None:
+    apply_theme("light")
+    light_dialog = QDialog()
+    qapp.sendEvent(light_dialog, theme.QEvent(theme.QEvent.Type.Polish))
+    assert light_dialog.testAttribute(theme.Qt.WidgetAttribute.WA_StyledBackground)
+    assert light_dialog.palette().color(QPalette.ColorRole.Window).name().upper() == "#F3F3F3"
+    assert light_dialog.palette().color(QPalette.ColorRole.WindowText).name().upper() == "#1B1B1B"
+
+    apply_theme("dark")
+    dark_dialog = QDialog()
+    assert dark_dialog.palette().color(QPalette.ColorRole.Window).name().upper() == "#1A1A1A"
 
 
 def test_accent_and_conflict_follow_theme(qapp) -> None:

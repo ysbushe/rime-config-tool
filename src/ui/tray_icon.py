@@ -28,6 +28,8 @@ class TrayIcon(QSystemTrayIcon):
         self._act_hotkey = menu.addAction("热键收藏：开")
         self._act_hotkey.setCheckable(True)
         self._act_hotkey.setChecked(True)
+        self._act_autostart = menu.addAction("开机自动启动")
+        self._act_autostart.setCheckable(True)
         menu.addSeparator()
         self._act_settings = menu.addAction("设置")
         menu.addSeparator()
@@ -69,6 +71,10 @@ class TrayIcon(QSystemTrayIcon):
         return self._act_hotkey
 
     @property
+    def action_autostart(self):
+        return self._act_autostart
+
+    @property
     def action_settings(self):
         return self._act_settings
 
@@ -78,3 +84,6 @@ class TrayIcon(QSystemTrayIcon):
 
     def set_auto_deploy_state(self, enabled: bool) -> None:
         self._act_auto_deploy.setChecked(enabled)
+
+    def set_autostart_state(self, enabled: bool) -> None:
+        self._act_autostart.setChecked(enabled)
