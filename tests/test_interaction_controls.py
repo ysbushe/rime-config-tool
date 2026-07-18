@@ -45,6 +45,11 @@ class _Autostart:
         return True
 
 
+class _DisabledAutostart(_Autostart):
+    def status(self):
+        return SimpleNamespace(enabled=False, reason="Windows 已禁用此启动项")
+
+
 class _Deploy:
     available = True
     deployer_path = "C:/Rime/WeaselDeployer.exe"
@@ -94,6 +99,14 @@ def test_settings_group_order(qapp) -> None:
         "扩展词库（只读检测）",
         "方案信息（只读）",
     ]
+
+
+def test_settings_shows_windows_startup_approval_status(qapp) -> None:
+    widget = SettingsWidget(_Settings(), _DisabledAutostart(), _Deploy())
+
+    assert widget._cb_autostart.isChecked() is False
+    assert widget._lbl_autostart_status.text() == "Windows 启动项：已被系统禁用"
+    assert widget._lbl_autostart_status.property("role") == "warning"
 
 
 def test_theme_cards_emit_and_update_selection(qapp) -> None:
@@ -235,6 +248,31 @@ def test_settings_refresh_does_not_toggle_autostart(qapp) -> None:
     SettingsWidget(_Settings(), autostart, _Deploy())
     assert autostart.enable_calls == 0
     assert autostart.disable_calls == 0
+
+
+def test_failed_autostart_enable_does_not_reenter_toggle(qapp, monkeypatch) -> None:
+    class FailingAutostart(_Autostart):
+        def __init__(self) -> None:
+            self.enable_calls = 0
+            self.disable_calls = 0
+
+        def enable(self) -> bool:
+            self.enable_calls += 1
+            return False
+
+        def disable(self) -> bool:
+            self.disable_calls += 1
+            return True
+
+    autostart = FailingAutostart()
+    widget = SettingsWidget(_Settings(), autostart, _Deploy())
+    monkeypatch.setattr("src.ui.settings_widget.QMessageBox.warning", MagicMock())
+
+    widget._cb_autostart.setChecked(True)
+
+    assert autostart.enable_calls == 1
+    assert autostart.disable_calls == 0
+    assert widget._cb_autostart.isChecked() is False
 
 
 def test_guarded_spin_requires_click_before_wheel(qapp) -> None:

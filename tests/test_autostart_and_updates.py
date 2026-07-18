@@ -50,6 +50,60 @@ def test_autostart_marks_stale_or_incomplete_bat_disabled(tmp_path: Path) -> Non
     assert service.status(str(target)).reason == "自启项缺少最小化启动参数"
 
 
+def test_autostart_reports_windows_disabled_entry(tmp_path: Path, monkeypatch) -> None:
+    service = _autostart(tmp_path)
+    target = tmp_path / "RimeConfig.exe"
+    target.write_bytes(b"exe")
+    bat = service._link.with_suffix(".bat")
+    bat.write_text(f'start "" "{target}" --autostart\n', encoding="utf-8")
+    monkeypatch.setattr(service, "_startup_approval_state", lambda _name: "disabled")
+
+    status = service.status(str(target))
+
+    assert status.enabled is False
+    assert status.reason == "Windows 已禁用此启动项"
+
+
+def test_autostart_enable_marks_windows_entry_enabled(tmp_path: Path, monkeypatch) -> None:
+    service = _autostart(tmp_path)
+    target = tmp_path / "RimeConfig.exe"
+    target.write_bytes(b"exe")
+    approved: list[str] = []
+
+    def create_bat(target_path: str, link_path: str) -> None:
+        Path(link_path).with_suffix(".bat").write_text(
+            f'start "" "{target_path}" --autostart\n', encoding="utf-8")
+
+    monkeypatch.setattr(service, "_create_shortcut", create_bat)
+    monkeypatch.setattr(
+        service, "_set_startup_approval_enabled", lambda name: approved.append(name) or True)
+
+    assert service.enable(str(target)) is True
+    assert approved == ["RimeConfig.bat"]
+
+
+def test_autostart_repairs_moved_target_when_requested(tmp_path: Path, monkeypatch) -> None:
+    service = _autostart(tmp_path)
+    target = tmp_path / "New" / "RimeConfig.exe"
+    target.parent.mkdir()
+    target.write_bytes(b"exe")
+    old_target = tmp_path / "Old" / "RimeConfig.exe"
+    service._link.with_suffix(".bat").write_text(
+        f'start "" "{old_target}" --autostart\n', encoding="utf-8")
+
+    def create_bat(target_path: str, link_path: str) -> None:
+        Path(link_path).with_suffix(".bat").write_text(
+            f'start "" "{target_path}" --autostart\n', encoding="utf-8")
+
+    monkeypatch.setattr(service, "_create_shortcut", create_bat)
+    monkeypatch.setattr(service, "_set_startup_approval_enabled", lambda _name: True)
+
+    status = service.repair_if_requested(True, str(target))
+
+    assert status.enabled is True
+    assert status.target == str(target)
+
+
 def test_package_kind_detects_directory_and_onefile(tmp_path: Path) -> None:
     directory_exe = tmp_path / "RimeConfig" / "RimeConfig.exe"
     directory_exe.parent.mkdir(parents=True)

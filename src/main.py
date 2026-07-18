@@ -64,7 +64,8 @@ def main() -> int:
     # IPC activation is not latency-sensitive; halve idle wakeups without a visible delay.
     wake_timer.start(400)
 
-    logger.info("应用已启动（托盘常驻）。")
+    mode = "开机自启最小化" if start_minimized else "普通启动"
+    logger.info("应用已启动（托盘常驻）。模式=%s", mode)
     try:
         return app.exec()
     finally:

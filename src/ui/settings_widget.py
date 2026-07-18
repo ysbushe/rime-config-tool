@@ -478,7 +478,17 @@ class SettingsWidget(QWidget):
         s_form = QFormLayout(g_start)
         self._cb_autostart = VisibleCheckBox("开机自动启动")
         self._cb_autostart.toggled.connect(self._on_autostart_toggled)
-        s_form.addRow(self._cb_autostart)
+        autostart_row = QWidget()
+        autostart_layout = QHBoxLayout(autostart_row)
+        autostart_layout.setContentsMargins(0, 0, 0, 0)
+        autostart_layout.setSpacing(10)
+        autostart_layout.addWidget(self._cb_autostart)
+        self._lbl_autostart_status = QLabel()
+        self._lbl_autostart_status.setMinimumWidth(190)
+        self._lbl_autostart_status.setProperty("role", "neutral")
+        autostart_layout.addWidget(self._lbl_autostart_status)
+        autostart_layout.addStretch(1)
+        s_form.addRow(autostart_row)
         root.addWidget(g_start)
 
         # 状态信息置底：先受管文件，最后为只读方案信息。
@@ -951,21 +961,49 @@ class SettingsWidget(QWidget):
 
     def sync_autostart_state(self) -> bool:
         """Refresh the checkbox from the validated Windows startup entry."""
-        enabled = self._autostart.enabled
+        status_getter = getattr(self._autostart, "status", None)
+        status = status_getter() if callable(status_getter) else None
+        enabled = bool(status.enabled) if status is not None else bool(self._autostart.enabled)
+        reason = str(getattr(status, "reason", ""))
         self._cb_autostart.blockSignals(True)
         try:
             self._cb_autostart.setChecked(enabled)
+            self._cb_autostart.setToolTip(reason)
         finally:
             self._cb_autostart.blockSignals(False)
+        self._set_autostart_status_text(enabled, reason)
         self._settings.autostart = enabled
         return enabled
+
+    def _set_autostart_status_text(self, enabled: bool, reason: str) -> None:
+        """Show the actual Windows startup approval state beside the checkbox."""
+        normalized = reason.strip()
+        if enabled:
+            text, role = "Windows 启动项：已启用", "success"
+        elif normalized == "Windows 已禁用此启动项":
+            text, role = "Windows 启动项：已被系统禁用", "warning"
+        elif normalized and normalized != "未启用":
+            text, role = f"Windows 启动项：{normalized}", "warning"
+        else:
+            text, role = "Windows 启动项：未启用", "neutral"
+        self._lbl_autostart_status.setText(text)
+        self._lbl_autostart_status.setToolTip(normalized or text)
+        if self._lbl_autostart_status.property("role") != role:
+            self._lbl_autostart_status.setProperty("role", role)
+            style = self._lbl_autostart_status.style()
+            style.unpolish(self._lbl_autostart_status)
+            style.polish(self._lbl_autostart_status)
 
     def _on_autostart_toggled(self, checked: bool) -> None:
         if checked:
             ok = self._autostart.enable()
             if not ok:
-                # 启用失败：不得静默显示为成功，回退勾选并提示
-                self._cb_autostart.setChecked(False)
+                # 启用失败：回退勾选时不能再次触发系统操作。
+                self._cb_autostart.blockSignals(True)
+                try:
+                    self._cb_autostart.setChecked(False)
+                finally:
+                    self._cb_autostart.blockSignals(False)
                 self._settings.autostart = False
                 QMessageBox.warning(
                     self, "开机自启",
@@ -979,6 +1017,8 @@ class SettingsWidget(QWidget):
                 QMessageBox.warning(self, "开机自启", "关闭开机自启失败，请检查启动文件夹权限。")
                 return
             self._settings.autostart = False
+        # The inline status beside the checkbox confirms the final Windows state
+        # without showing a modal dialog that can block the settings page.
         self.sync_autostart_state()
 
     def _on_deploy(self) -> None:

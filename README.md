@@ -2,7 +2,20 @@
 
 > 快速采集、配置、调整并长期维护属于自己的个人 Rime 词库。
 
-![词库管理主界面](docs/images/01-library-management.png)
+![词库管理主界面](image/01-library-management.png)
+
+## v0.6.5 更新
+
+- 设置页在“开机自动启动”勾选框后显示 Windows 实际启动项状态，明确区分已启用、未启用、被系统禁用及异常情形。
+- 取消开机自启动后改为即时更新状态，不再显示会阻塞设置页的确认对话框；启用失败时不会重复触发关闭操作。
+- 已启用自启动的目录便携版移动到新位置后，会在下次启动时校验旧快捷方式并自动修复为新路径。
+
+## v0.6.4 更新
+
+- 备份采用“原文件名_日期时间.bak”，兼容识别和恢复历史备份。
+- 单文件版与目录便携版可分别检查、下载和替换对应更新包。
+- 目录便携包的主题与勾选图标改为内置资源，移动到中文、空格或特殊字符路径后仍可正常显示。
+- 开机自启动会校验 Windows 启动项状态、快捷方式目标和最小化启动参数。
 
 ## 为自己的输入习惯，打造一套个人词库
 
@@ -30,15 +43,15 @@ RIME 配置小工具最初也是为解决这一痛点而开发。它尝试为个
 
 保存后，工具可自动刷新 Rime 部署，使新增词条尽快生效。用户还可以编辑词条权重，控制它在相同编码候选中的排序位置，让常用内容更容易被优先输入。
 
-![快速采集窗口](docs/images/03-quick-capture.png)
+![快速采集窗口](image/03-quick-capture.png)
 
-![采集结果与编码建议](docs/images/03b-quick-capture-result.png)
+![采集结果与编码建议](image/03b-quick-capture.png)
 
 ### 候选与权重预览
 
 采集和编辑窗口会显示独立 Rime 会话的前五项候选，以及可读取的系统词典或自定义词权重。当前正在采集或编辑的文本会使用主题强调色标记。候选预览仅用于辅助判断，不会改变正在使用的输入法。
 
-![Rime 候选与权重预览](docs/images/04-candidate-preview.png)
+![Rime 候选与权重预览](image/04.png)
 
 ## 主要功能
 
@@ -50,7 +63,7 @@ RIME 配置小工具最初也是为解决这一痛点而开发。它尝试为个
 - 分组显示条目数量，便于整理个人词库。
 - 提供词库检查、修改历史和导入导出能力。
 
-![分组与批量维护](docs/images/02-library-groups-and-batch.png)
+![分组与批量维护](image/02-library-groups-and-batch.png)
 
 ### 多编码维护
 
@@ -58,7 +71,7 @@ RIME 配置小工具最初也是为解决这一痛点而开发。它尝试为个
 
 纯英文文本可选择小写、大写或原样编码；英文短语会自动移除空格和连字符，生成连续编码。
 
-![多编码编辑](docs/images/05-multi-code-editor.png)
+![多编码编辑](image/05.png)
 
 ### 重码集中管理
 
@@ -66,9 +79,9 @@ RIME 配置小工具最初也是为解决这一痛点而开发。它尝试为个
 
 | 按重码文本浏览 | 集中编辑重码文本 |
 | --- | --- |
-| ![按重码文本浏览](docs/images/06a-duplicate-text-browser.png) | ![集中编辑重码文本](docs/images/06b-duplicate-text-editor.png) |
+| ![按重码文本浏览](image/06a.png) | ![集中编辑重码文本](image/06b.png) |
 | 按重码拼音浏览 | 集中编辑重码拼音 |
-| ![按重码拼音浏览](docs/images/06c-duplicate-code-browser.png) | ![集中编辑重码拼音](docs/images/06d-duplicate-code-editor.png) |
+| ![按重码拼音浏览](image/06c.png) | ![集中编辑重码拼音](image/06d.png) |
 
 ### 备份与恢复
 
@@ -77,7 +90,7 @@ RIME 配置小工具最初也是为解决这一痛点而开发。它尝试为个
 - 支持自动清理旧备份，并可直接打开备份文件夹。
 - 可选择历史版本恢复词库短语、输入方案和符号表。
 
-![备份与恢复](docs/images/07-backup-and-restore.png)
+![备份与恢复](image/07.png)
 
 ### 托盘、部署与主题
 
@@ -87,12 +100,12 @@ RIME 配置小工具最初也是为解决这一痛点而开发。它尝试为个
 - 提供浅色、深色和水墨三种主题。
 
 <p align="center">
-  <img src="docs/images/08-tray-menu.png" alt="系统托盘菜单" />
+  <img src="image/08.png" alt="系统托盘菜单" />
 </p>
 
 | 深色主题 | 水墨主题 |
 | --- | --- |
-| ![深色主题](docs/images/09a-theme-dark.png) | ![水墨主题](docs/images/09b-theme-ink.png) |
+| ![深色主题](image/09a.png) | ![水墨主题](image/09b.png) |
 
 ## 下载与运行
 
@@ -154,7 +167,7 @@ python -m venv .venv
 
 ## 版本与说明
 
-当前版本：`v0.6.3`
+当前版本：`v0.6.5`
 
 - [用户说明](docs/USER_GUIDE.md)
 - [更新记录](docs/RELEASE_NOTES.md)

@@ -57,9 +57,9 @@ class MainWindow(QMainWindow):
         self._set_app_icon()
 
         self._build_pages()
+        self._wire_autostart()
         self._build_tray()
         self._wire_hotkey()
-        self._wire_autostart()
         self._scheduled_backup_timer = QTimer(self)
         self._scheduled_backup_timer.timeout.connect(self._run_scheduled_backup)
         self._scheduled_backup_timer.start(60 * 60 * 1000)
@@ -306,7 +306,11 @@ class MainWindow(QMainWindow):
         ok = self._ctx.autostart.enable() if checked else self._ctx.autostart.disable()
         enabled = self._sync_autostart_state()
         if not ok or enabled != checked:
-            self._show_result_bubble(False, "开机自启动设置失败，请检查启动文件夹权限。")
+            reason = self._ctx.autostart.status().reason
+            self._show_result_bubble(False, f"开机自启动设置失败：{reason}。")
+            return
+        message = "已启用开机自启动，登录后将最小化至系统托盘。" if checked else "已关闭开机自启动。"
+        self._show_result_bubble(True, message)
 
     def _toggle_hotkey_from_tray(self) -> None:
         enabled = not self._ctx.settings.hotkey_enabled
@@ -396,10 +400,12 @@ class MainWindow(QMainWindow):
     # 自启
     # ------------------------------------------------------------------ #
     def _wire_autostart(self) -> None:
-        # A checked persisted setting repairs a missing/stale managed shortcut.
-        if self._ctx.settings.autostart and not self._ctx.autostart.enabled:
-            self._ctx.autostart.enable()
-        self._ctx.settings.autostart = self._ctx.autostart.enabled
+        # Repair a moved shortcut before tray/status widgets can clear intent.
+        requested = bool(self._ctx.settings.autostart)
+        status = self._ctx.autostart.repair_if_requested(requested)
+        self._ctx.settings.autostart = status.enabled
+        if requested and not status.enabled:
+            logger.warning("开机自启动未启用：%s", status.reason)
 
     # ------------------------------------------------------------------ #
     # 选项卡切换

@@ -14,6 +14,10 @@ logger = get_logger(__name__)
 
 _LINK_NAME = "RimeConfig.lnk"
 _AUTOSTART_ARGUMENT = "--autostart"
+_STARTUP_APPROVED_KEY = (
+    r"Software\Microsoft\Windows\CurrentVersion\Explorer"
+    r"\StartupApproved\StartupFolder"
+)
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,8 @@ class Autostart:
                 continue
             if _AUTOSTART_ARGUMENT not in arguments.split():
                 return AutostartStatus(False, "自启项缺少最小化启动参数", actual)
+            if self._startup_approval_state(entry.name) == "disabled":
+                return AutostartStatus(False, "Windows 已禁用此启动项", actual)
             return AutostartStatus(True, "已正确启用", actual)
 
         if stale_target:
@@ -76,12 +82,30 @@ class Autostart:
             self._startup.mkdir(parents=True, exist_ok=True)
             self.disable()
             self._create_shortcut(target, str(self._link))
+            entry = self._link if self._link.is_file() else self._link.with_suffix(".bat")
+            if not entry.is_file() or not self._set_startup_approval_enabled(entry.name):
+                logger.warning("Windows 未确认启用启动项：%s", entry)
+                return False
             ok = self.status(target).enabled
             logger.info("启用开机自启：%s result=%s", self._link, ok)
             return ok
         except Exception as exc:
             logger.warning("启用开机自启失败：%s", exc)
             return False
+
+    def repair_if_requested(self, requested: bool, target: Optional[str] = None) -> AutostartStatus:
+        """Repair a missing or moved shortcut without overriding Windows disablement."""
+        status = self.status(target)
+        repairable = {
+            "未启用",
+            "自启项指向旧程序位置",
+            "自启项缺少最小化启动参数",
+            "自启项无法读取或已损坏",
+        }
+        if requested and status.reason in repairable:
+            self.enable(target)
+            status = self.status(target)
+        return status
 
     def disable(self) -> bool:
         try:
@@ -111,6 +135,39 @@ class Autostart:
         except Exception as exc:
             logger.info("读取自启快捷方式失败：%s", exc)
             return "", ""
+
+    @staticmethod
+    def _startup_approval_state(entry_name: str) -> str:
+        """Return Windows StartupApproved state: enabled, disabled, or unknown."""
+        try:
+            import winreg
+
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _STARTUP_APPROVED_KEY) as key:
+                value, value_type = winreg.QueryValueEx(key, entry_name)
+            if value_type != winreg.REG_BINARY or not isinstance(value, bytes) or not value:
+                return "unknown"
+            return "disabled" if value[0] in (3, 5, 7) else "enabled"
+        except FileNotFoundError:
+            return "unknown"
+        except OSError as exc:
+            logger.info("读取 Windows 启动项状态失败：%s", exc)
+            return "unknown"
+
+    @staticmethod
+    def _set_startup_approval_enabled(entry_name: str) -> bool:
+        """Mark an explicitly enabled Startup-folder entry as enabled in Windows."""
+        try:
+            import winreg
+
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER, _STARTUP_APPROVED_KEY) as key:
+                winreg.SetValueEx(
+                    key, entry_name, 0, winreg.REG_BINARY,
+                    bytes((2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
+                )
+            return True
+        except OSError as exc:
+            logger.warning("写入 Windows 启动项状态失败：%s", exc)
+            return False
 
     @staticmethod
     def _normalize_target(target: Optional[str]) -> str:
