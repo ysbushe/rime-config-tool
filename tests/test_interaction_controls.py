@@ -92,6 +92,7 @@ def test_settings_group_order(qapp) -> None:
         "Rime 目录与部署",
         "行为",
         "词库维护",
+        "输入诊断（按需运行）",
         "GitHub 更新",
         "备份与恢复",
         "开机自启",
@@ -170,6 +171,9 @@ def test_hotkey_capture_opens_only_quick_add_dialog() -> None:
     phrase_manager = MagicMock()
     window = SimpleNamespace(
         _phrase_manager=phrase_manager,
+        _ctx=SimpleNamespace(
+            rime_preview_service=SimpleNamespace(warm_up_async=MagicMock()),
+        ),
         _select_tab=MagicMock(),
         show_main=MagicMock(),
     )

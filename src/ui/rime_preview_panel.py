@@ -96,6 +96,8 @@ class RimePreviewPanel(QWidget):
         self._request_timer.setSingleShot(True)
         self._request_timer.setInterval(120)
         self._request_timer.timeout.connect(self._begin_request)
+        self._has_requested = False
+        self._disposed = False
         if self._service is not None and hasattr(self._service, "events"):
             self._service.events.changed.connect(self._refresh)
 
@@ -114,8 +116,21 @@ class RimePreviewPanel(QWidget):
                 self.hide()
             return
         self._show_status("输入法候选预览：正在读取…", "候选与权重将在读取完成后显示。")
+        self._request_timer.setInterval(20 if not self._has_requested else 120)
+        self._has_requested = True
         self._request_timer.start()
 
+    def dispose(self) -> None:
+        """Detach this short-lived panel from the application-wide service."""
+        if self._disposed:
+            return
+        self._disposed = True
+        self._request_timer.stop()
+        if self._service is not None and hasattr(self._service, "events"):
+            try:
+                self._service.events.changed.disconnect(self._refresh)
+            except (RuntimeError, TypeError):
+                pass
     def _begin_request(self) -> None:
         if self._service is None or not self._code:
             return
@@ -135,6 +150,8 @@ class RimePreviewPanel(QWidget):
 
 
     def _refresh(self) -> None:
+        if self._disposed:
+            return
         if self._service is None or not self._code:
             if self._reserve_space:
                 self._show_status("输入法候选预览：等待编码…", "编码建议准备完成后将在此显示。")

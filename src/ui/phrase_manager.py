@@ -40,13 +40,19 @@ from src.service.group_service import GroupService
 from src.service.library_tools import MetadataStore, health_check
 from src.service.pinyin_service import PinyinService
 from src.service.pinyin_display_store import DISPLAY_INI_FILENAME, PinyinDisplayStore
+from src.service.rime_profiles import scheme_display_state
 from src.service.system_dictionary_index import SystemDictionaryIndex
+from src.service.wanxiang_import import WanxiangImportService
 from src.settings import Settings
 from src.ui.click_activated_combo import ClickActivatedComboBox
 from src.ui.delete_confirm_dialog import confirm_delete
 from src.ui.code_delete_dialog import CodeDeleteDialog
 from src.ui.group_panel import GroupPanel
-from src.ui.library_dialogs import DuplicateManagerDialog, MaintenanceDialog, issue_lines
+from src.ui.library_dialogs import (
+    DuplicateManagerDialog, LibraryHealthDialog, MaintenanceDialog,
+    PhraseSearchResultDialog,
+)
+from src.ui.wanxiang_import_dialog import WanxiangImportDialog
 from src.ui.phrase_editor import PhraseEditor
 from src.ui.multi_code_editor import MultiCodeEditor
 from src.ui.phrase_table import (
@@ -112,6 +118,7 @@ class PhraseManager(QWidget):
         self._deploy_poll.timeout.connect(self._drain_deploy_results)
 
         self._build_ui()
+        self.refresh_scheme_status()
         self.refresh()
         self._maybe_first_run_auto_group()
 
@@ -158,6 +165,22 @@ class PhraseManager(QWidget):
         right.setContentsMargins(0, 0, 0, 0)
         right.setSpacing(8)
 
+        # Persistent context: unlike the bottom status, this is never replaced
+        # by save/deploy messages and therefore keeps scheme/file ownership clear.
+        scheme_bar = QWidget(self)
+        scheme_bar.setObjectName("SchemeContextBar")
+        scheme_layout = QHBoxLayout(scheme_bar)
+        scheme_layout.setContentsMargins(10, 4, 8, 4)
+        scheme_layout.setSpacing(8)
+        self._scheme_summary = QLabel("正在识别当前方案…", scheme_bar)
+        self._scheme_summary.setObjectName("SchemeSummary")
+        self._scheme_refresh = QPushButton("刷新", scheme_bar)
+        self._scheme_refresh.setToolTip("重新读取 Rime 的启用方案和上次使用方案")
+        self._scheme_refresh.clicked.connect(self.refresh_scheme_status)
+        scheme_layout.addWidget(self._scheme_summary, 1)
+        scheme_layout.addWidget(self._scheme_refresh)
+        right.addWidget(scheme_bar)
+
         # 紧凑工具栏：独立容器让其与顶部选项卡清晰分层，不增加垂直高度。
         toolbar_widget = QWidget(self)
         toolbar_widget.setObjectName("PhraseToolbar")
@@ -183,6 +206,10 @@ class PhraseManager(QWidget):
         self._filter_combo.currentTextChanged.connect(self._on_filter_changed)
         self._btn_history = QPushButton("修改历史")
         self._btn_history.clicked.connect(self._open_history)
+        self._btn_import = QPushButton("从其他方案导入")
+        self._btn_import.setToolTip("无损扫描并将白霜全拼自定义词库导入万象独立词库")
+        self._btn_import.clicked.connect(self._open_scheme_import)
+
         self._btn_autogroup = QPushButton("自动分组")
         self._btn_autogroup.clicked.connect(self._on_auto_group)
         self._btn_add = QPushButton("+ 新增")
@@ -199,6 +226,7 @@ class PhraseManager(QWidget):
         toolbar.addWidget(self._btn_duplicates)
         toolbar.addWidget(self._filter_combo)
         toolbar.addWidget(self._btn_history)
+        toolbar.addWidget(self._btn_import)
         toolbar.addStretch(1)
         toolbar.addWidget(self._btn_batch_select)
         toolbar.addWidget(self._btn_select_all)
@@ -268,6 +296,17 @@ class PhraseManager(QWidget):
         """
         if hasattr(self, "_group_panel") and self._group_panel is not None:
             self._group_panel.restyle()
+
+    def refresh_scheme_status(self) -> None:
+        """Refresh persistent scheme/file context without rebuilding the table."""
+        state = scheme_display_state(self._repo.path.parent)
+        filename = self._repo.path.name or self.PHRASE_FILE
+        line = f"{state.summary}　｜　本页词库：{filename}　｜　{state.detail}"
+        self._scheme_summary.setText(line)
+        self._scheme_summary.setToolTip(line)
+        self._scheme_summary.setProperty("role", state.role)
+        self._scheme_summary.style().unpolish(self._scheme_summary)
+        self._scheme_summary.style().polish(self._scheme_summary)
 
     def _apply_visibility(self) -> None:
         """根据当前分组与搜索关键字显隐行（不重建表格）。"""
@@ -652,8 +691,36 @@ class PhraseManager(QWidget):
         self._status.setText(message)
         self.editCompleted.emit(True, message)
 
+    def _health_result_phrases(self, text: str, code: str) -> list[Phrase]:
+        normalized = raw_code(code)
+        exact = [
+            item for item in self._repo.all()
+            if item.text == text and raw_code(item.code) == normalized
+        ]
+        if exact:
+            return exact
+        keyword = text or normalized
+        return self._repo.search(keyword) if keyword else []
+
+    def _open_health_result(self, text: str, code: str) -> None:
+        label = text or code or "空条目"
+        PhraseSearchResultDialog(
+            f"查看词条：{label}",
+            lambda: self._health_result_phrases(text, code),
+            self._on_multi_code_edit,
+            self._on_delete,
+            self._groups,
+            self,
+            self._display_store.editor_display_for,
+        ).exec()
+
     def open_health_check(self) -> None:
-        MaintenanceDialog("词库检查", issue_lines(health_check(self._repo.all(), self._groups)), self).exec()
+        phrases = self._repo.all()
+        LibraryHealthDialog(
+            phrases, health_check(phrases, self._groups),
+            self._open_health_result, self,
+            self._display_store.editor_display_for,
+        ).exec()
 
     def _open_health(self) -> None:
         self.open_health_check()
@@ -661,6 +728,31 @@ class PhraseManager(QWidget):
     def _open_history(self) -> None:
         lines = [f"{item['at']}  {item['action']}：{item['detail']}" for item in self._metadata.history()]
         MaintenanceDialog("修改历史", lines, self).exec()
+
+    def _open_scheme_import(self) -> None:
+        if self._dirty:
+            QMessageBox.warning(
+                self,
+                "存在未保存修改",
+                "请先保存或撤销当前词库修改，再创建跨方案导入预览。",
+            )
+            return
+        service = WanxiangImportService(
+            self._repo.path.parent,
+            self._backup.backup_dir,
+            self._deploy.deploy,
+        )
+        dialog = WanxiangImportDialog(
+            service,
+            sandbox_mode=bool(getattr(self._settings, "sandbox_mode", False)),
+            parent=self,
+        )
+        dialog.importCompleted.connect(self._on_scheme_import_completed)
+        dialog.exec()
+
+    def _on_scheme_import_completed(self, message: str) -> None:
+        self.refresh_scheme_status()
+        self._status.setText(message)
 
     def _selected_phrase(self) -> Phrase | None:
         index = self._table.currentIndex()
@@ -874,6 +966,7 @@ class PhraseManager(QWidget):
         self._content_sig = None
         self._last_sort_mode = None
         self._visibility_key = None
+        self.refresh_scheme_status()
         self.refresh(force=True)
 
     def _schedule_deploy(self) -> None:
@@ -926,6 +1019,7 @@ class PhraseManager(QWidget):
         if self._rime_preview_service is not None:
             if ok:
                 self._rime_preview_service.invalidate_after_deploy()
+                self.refresh_scheme_status()
             else:
                 self._rime_preview_service.mark_waiting_for_deploy()
         if self._deploy_pending:
@@ -942,17 +1036,27 @@ class PhraseManager(QWidget):
 
     # 供外部（主窗口热键）触发弹窗式快速收藏
     def open_quick_add(self, prefill_text: str = "", notice: str = "") -> None:
+        from time import perf_counter
         from src.ui.quick_add_dialog import QuickAddDialog
+        from src.utils.logger import get_logger
 
+        started = perf_counter()
         dlg = QuickAddDialog(
             prefill_text=prefill_text, groups=self._groups.list_groups(),
-            pinyin=self._pinyin, repo=self._repo, system_dictionary_index=self._system_dictionary_index,
+            pinyin=self._pinyin, repo=self._repo,
+            system_dictionary_index=self._system_dictionary_index,
             rime_preview_service=self._rime_preview_service,
             create_group=self._groups.add_group, notice=notice, parent=None,
         )
-        if dlg.exec() == dlg.DialogCode.Accepted:
-            vals = dlg.get_values()
+        get_logger(__name__).info(
+            "快速收藏：窗口构建 elapsed_ms=%.1f",
+            (perf_counter() - started) * 1000,
+        )
+        try:
+            if dlg.exec() != dlg.DialogCode.Accepted:
+                return
             try:
+                vals = dlg.get_values()
                 self._apply_multiple_codes(vals)
                 codes = [vals.get("code", "")] + list(vals.get("additional_codes", []))
                 unique_codes = []
@@ -969,3 +1073,6 @@ class PhraseManager(QWidget):
                 self._status.setProperty("role", "error")
                 self._status.setText(message)
                 self.favoriteCompleted.emit(False, message)
+        finally:
+            dlg.dispose()
+            dlg.deleteLater()

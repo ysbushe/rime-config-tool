@@ -75,3 +75,13 @@ def test_tab_discipline(temp_rime_dir) -> None:
     parts = last.split("\t")
     assert len(parts) == 3
     assert parts[0] == "一个词" and parts[1] == "ig" and parts[2] == "5"
+
+
+def test_conflict_log_does_not_include_phrase_content(phrase_repo: PhraseRepo, caplog) -> None:
+    caplog.set_level("INFO")
+    phrase = phrase_repo.all()[0]
+
+    phrase_repo.upsert(phrase.text, phrase.code, 7)
+
+    assert phrase.text not in caplog.text
+    assert phrase.code not in caplog.text

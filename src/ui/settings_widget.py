@@ -51,6 +51,10 @@ from src.ui.click_activated_spin import ClickActivatedSpinBox
 from src.settings import Settings
 from src.service.autostart import Autostart
 from src.service.deploy_service import DeployService
+from src.service.input_diagnostics_launcher import (
+    diagnostics_process_running,
+    launch_input_diagnostics,
+)
 from src.service.backup_service import BackupService
 from src.ui.theme import THEME_TOKENS
 from src.service.update_service import REPOSITORY_URL, UpdateService
@@ -165,6 +169,8 @@ class SettingsWidget(QWidget):
                  deploy: DeployService, schema_repo: SchemaRepo | None = None,
                  backup: BackupService | None = None,
                  health_opener=None,
+                 diagnostics_launcher=None,
+                 diagnostics_process_checker=None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._settings = settings
@@ -172,6 +178,14 @@ class SettingsWidget(QWidget):
         self._deploy = deploy
         self._schema_repo = schema_repo
         self._health_opener = health_opener
+        self._diagnostics_launcher = diagnostics_launcher or launch_input_diagnostics
+        self._diagnostics_process_checker = (
+            diagnostics_process_checker or diagnostics_process_running
+        )
+        self._diagnostics_pid: int | None = None
+        self._diagnostics_poll = QTimer(self)
+        self._diagnostics_poll.setInterval(500)
+        self._diagnostics_poll.timeout.connect(self._poll_input_diagnostics)
         self._backup = backup or BackupService(
             settings.rime_dir, getattr(settings, "backup_count", 5),
             getattr(settings, "backup_dir", ""))
@@ -192,6 +206,29 @@ class SettingsWidget(QWidget):
         if self._health_opener is not None:
             self._health_opener()
 
+    def _on_input_diagnostics(self) -> None:
+        result = self._diagnostics_launcher()
+        ok, message = result[:2]
+        pid = result[2] if len(result) > 2 else None
+        self._diagnostics_pid = int(pid) if ok and pid else None
+        if self._diagnostics_pid is not None:
+            self._diagnostics_poll.start()
+        else:
+            self._diagnostics_poll.stop()
+        self._lbl_diagnostics_status.setProperty("role", "success" if ok else "error")
+        self._lbl_diagnostics_status.setText(message)
+        self._lbl_diagnostics_status.setVisible(True)
+
+    def _poll_input_diagnostics(self) -> None:
+        if self._diagnostics_pid is None:
+            self._diagnostics_poll.stop()
+            return
+        if self._diagnostics_process_checker(self._diagnostics_pid):
+            return
+        self._diagnostics_pid = None
+        self._diagnostics_poll.stop()
+        self._lbl_diagnostics_status.setProperty("role", "muted")
+        self._lbl_diagnostics_status.setText("输入诊断已停止。")
     def _build_theme_selector(self) -> QWidget:
         selector = QWidget()
         selector.setObjectName("ThemeSelector")
@@ -393,6 +430,26 @@ class SettingsWidget(QWidget):
         library_layout.addStretch(1)
         library_layout.addWidget(self._btn_library_health)
         root.addWidget(g_library)
+
+        g_diagnostics = QGroupBox("输入诊断（按需运行）")
+        diagnostics_layout = QVBoxLayout(g_diagnostics)
+        diagnostics_row = QHBoxLayout()
+        diagnostics_note = QLabel(
+            "独立诊断程序默认不运行。遇到候选窗、按键或输入法异常时再启动；"
+            "关闭诊断窗口后监控随即停止。"
+        )
+        diagnostics_note.setWordWrap(True)
+        self._btn_input_diagnostics = QPushButton("启动输入诊断")
+        self._btn_input_diagnostics.setObjectName("Primary")
+        self._btn_input_diagnostics.clicked.connect(self._on_input_diagnostics)
+        diagnostics_row.addWidget(diagnostics_note, 1)
+        diagnostics_row.addWidget(self._btn_input_diagnostics)
+        self._lbl_diagnostics_status = QLabel()
+        self._lbl_diagnostics_status.setWordWrap(True)
+        self._lbl_diagnostics_status.setVisible(False)
+        diagnostics_layout.addLayout(diagnostics_row)
+        diagnostics_layout.addWidget(self._lbl_diagnostics_status)
+        root.addWidget(g_diagnostics)
 
         g_github = QGroupBox("GitHub 更新")
         github_layout = QVBoxLayout(g_github)

@@ -46,3 +46,36 @@ def test_symbols_table_uses_text_actions(qapp, app_context) -> None:
                for row in range(widget._table.rowCount()))
     assert all(widget._table.item(row, 1).text() == "删除"
                for row in range(widget._table.rowCount()))
+
+def test_quick_add_dispose_stops_background_work(qapp) -> None:
+    from src.ui.quick_add_dialog import QuickAddDialog
+
+    dialog = QuickAddDialog()
+    dialog.dispose()
+
+    assert dialog._disposed is True
+    assert dialog._preview_panel._disposed is True
+    assert not dialog._suggestion_result_timer.isActive()
+    assert not dialog._dictionary_timer.isActive()
+
+    dialog.close()
+
+
+def test_preview_first_query_is_fast_then_debounced(qapp) -> None:
+    from src.ui.rime_preview_panel import RimePreviewPanel
+
+    service = RimePreviewService("", "")
+    panel = RimePreviewPanel(service, reserve_space=True)
+    panel.set_query("测试", "ceshi")
+    assert panel._request_timer.interval() == 20
+
+    panel.set_query("测试二", "ceshier")
+    assert panel._request_timer.interval() == 120
+
+    panel.dispose()
+    assert not panel._request_timer.isActive()
+
+
+def test_preview_engine_stays_warm_for_ten_minutes() -> None:
+    service = RimePreviewService("C:/Rime")
+    assert service._idle_timeout_seconds == 10 * 60

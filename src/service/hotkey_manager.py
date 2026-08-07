@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 from typing import Callable, Optional
 
 from PySide6.QtCore import QTimer
@@ -109,6 +110,7 @@ class HotkeyManager:
         backend = self._backend
 
         def run_capture(generation: int, target=None) -> None:
+            started = time.perf_counter()
             text = ""
             try:
                 logger.info("热键触发：开始取词 backend=%s", backend.name if backend else "none")
@@ -120,7 +122,11 @@ class HotkeyManager:
             except Exception as exc:
                 logger.warning("抓取选中文本失败：%s", exc)
                 text = ""
-            logger.info("热键触发：取词结束 result=%s", "成功" if text else "空")
+            logger.info(
+                "热键触发：取词结束 result=%s elapsed_ms=%.1f",
+                "成功" if text else "空",
+                (time.perf_counter() - started) * 1000,
+            )
             self._capture_results.put((generation, text))
 
         def handler() -> None:

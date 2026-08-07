@@ -212,3 +212,33 @@ def test_release_ico_is_loadable() -> None:
     assert icon_path.is_file()
     assert not icon.isNull()
     assert not icon.pixmap(16, 16).isNull()
+
+def test_settings_launches_input_diagnostics_only_on_click(qapp) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    calls = []
+    widget = SettingsWidget(
+        _FakeSettings(), _FakeAutostart(), _FakeDeploy(),
+        diagnostics_launcher=lambda: (calls.append("started") or True, "已按需启动"),
+    )
+
+    assert calls == []
+    assert widget._lbl_diagnostics_status.isHidden()
+    widget._btn_input_diagnostics.click()
+    assert calls == ["started"]
+    assert widget._lbl_diagnostics_status.text() == "已按需启动"
+
+def test_settings_updates_status_when_diagnostics_closes(qapp) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    widget = SettingsWidget(
+        _FakeSettings(), _FakeAutostart(), _FakeDeploy(),
+        diagnostics_launcher=lambda: (True, "输入诊断程序已启动。", 123),
+        diagnostics_process_checker=lambda _pid: False,
+    )
+
+    widget._btn_input_diagnostics.click()
+    assert widget._diagnostics_poll.isActive()
+    widget._poll_input_diagnostics()
+    assert not widget._diagnostics_poll.isActive()
+    assert widget._lbl_diagnostics_status.text() == "输入诊断已停止。"

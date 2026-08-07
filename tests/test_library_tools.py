@@ -5,6 +5,7 @@ from src.service.library_tools import (
     DuplicateIndex,
     MetadataStore,
     diff_phrase_lines,
+    exact_duplicate_groups,
     export_text,
     health_check,
     parse_import_text,
@@ -46,3 +47,18 @@ def test_import_export_health_and_diff():
     }
     issues = health_check([Phrase("", "", 100), Phrase("", "", 1)])
     assert {item.kind for item in issues} >= {"empty_text", "empty_code", "weight", "exact_duplicate"}
+
+def test_exact_duplicate_groups_are_stable_and_normalize_codes():
+    phrases = [
+        Phrase("甲", "jia", 2),
+        Phrase("中间", "zhongjian", 5),
+        Phrase("甲", "ji'a", 9),
+        Phrase("乙", "yi", 3),
+        Phrase("乙", "yi", 4),
+    ]
+
+    groups = exact_duplicate_groups(phrases)
+
+    assert [group.key for group in groups] == [("甲", "jia"), ("乙", "yi")]
+    assert groups[0].first_index == 0
+    assert [item.weight for item in groups[0].entries] == [2, 9]

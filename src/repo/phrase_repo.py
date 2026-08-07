@@ -156,8 +156,8 @@ class PhraseRepo:
             if weight is not None:
                 existing.weight = max(1, min(99, int(weight)))
             existing.is_conflict = True
-            logger.info("冲突：%s 已存在，保留单条并更新权重 → %d",
-                        existing.key, existing.weight)
+            logger.info("冲突：已有相同文本与编码，保留单条并更新权重 → %d",
+                        existing.weight)
             return existing, False, True
         w = max(1, min(99, int(weight if weight is not None else DEFAULT_WEIGHT)))
         phrase = Phrase(text=text, code=code, weight=w)

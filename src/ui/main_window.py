@@ -13,7 +13,8 @@ from typing import Optional
 
 from src import __version__
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QEvent, QTimer, Qt
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -38,6 +39,9 @@ logger = get_logger(__name__)
 
 _QSS_PATH = Path(__file__).resolve().parent / "application.qss"
 
+TAB_LIBRARY = 0
+TAB_SYMBOLS = 1
+TAB_SETTINGS = 2
 _TABS = ["词库管理", "符号表", "设置"]
 
 
@@ -57,6 +61,9 @@ class MainWindow(QMainWindow):
         self._set_app_icon()
 
         self._build_pages()
+        self._hide_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        self._hide_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self._hide_shortcut.activated.connect(self.hide)
         self._wire_autostart()
         self._build_tray()
         self._wire_hotkey()
@@ -68,7 +75,7 @@ class MainWindow(QMainWindow):
         # 应用当前主题（作用于 QApplication，弹窗自动继承）
         self._update_tray_deploy()
 
-        self._select_tab(0)
+        self._select_tab(TAB_LIBRARY)
         self._check_rime_dir()
         # Normal launches warm optional services after first paint. Autostart waits
         # until the user actually opens the window, keeping Windows login light.
@@ -207,8 +214,8 @@ class MainWindow(QMainWindow):
             ctx.settings, ctx.deploy_service, ctx.pinyin_service,
             ctx.system_dictionary_index, ctx.rime_preview_service, ctx.metadata_store,
         )
-        # The two infrequently used pages are created on first activation.  This
-        # keeps the first usable window focused on the word library.
+        # Infrequently used pages are created on first activation. This keeps
+        # the first usable window focused on the word library.
         self._symbols_widget: SymbolsConfigWidget | None = None
         self._settings_widget: SettingsWidget | None = None
         self._symbols_placeholder = QWidget()
@@ -216,9 +223,9 @@ class MainWindow(QMainWindow):
         self._phrase_manager.favoriteCompleted.connect(self._on_favorite_completed)
         self._phrase_manager.editCompleted.connect(self._on_edit_completed)
 
-        self._tabs.addTab(self._phrase_manager, _TABS[0])
-        self._tabs.addTab(self._symbols_placeholder, _TABS[1])
-        self._tabs.addTab(self._settings_placeholder, _TABS[2])
+        self._tabs.addTab(self._phrase_manager, _TABS[TAB_LIBRARY])
+        self._tabs.addTab(self._symbols_placeholder, _TABS[TAB_SYMBOLS])
+        self._tabs.addTab(self._settings_placeholder, _TABS[TAB_SETTINGS])
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
         self.setCentralWidget(self._tabs)
@@ -230,8 +237,8 @@ class MainWindow(QMainWindow):
         self._tray = TrayIcon(self)
         # 使用主窗口初始化的应用图标（程序化生成，托盘必有图标）
         self._tray.set_icon(getattr(self, "_app_icon", QApplication.windowIcon()))
-        self._tray.action_open.triggered.connect(self.show_main)
-        self._tray.requestOpen.connect(self.show_main)
+        self._tray.action_open.triggered.connect(self._request_show_main)
+        self._tray.requestOpen.connect(self._request_show_main)
         self._tray.action_deploy.triggered.connect(self.deploy_now)
         self._tray.action_auto_deploy.triggered.connect(self._toggle_auto_deploy_from_tray)
         self._tray.action_hotkey.triggered.connect(self._toggle_hotkey_from_tray)
@@ -270,6 +277,7 @@ class MainWindow(QMainWindow):
         return ok
 
     def _on_hotkey_trigger(self, text: str) -> None:
+        self._ctx.rime_preview_service.warm_up_async()
         # 抓取到的选中文本（可能为空）
         captured = (text or "").strip()
         notice = ""
@@ -329,9 +337,18 @@ class MainWindow(QMainWindow):
         if self._settings_widget is not None:
             self._settings_widget.refresh()
 
+    def _request_show_main(self) -> None:
+        """托盘菜单关闭后再恢复窗口，避免 Windows 前台激活竞争。"""
+        QTimer.singleShot(0, self.show_main)
+
+    def _request_open_tab(self, index: int) -> None:
+        def restore() -> None:
+            self.show_main()
+            self._select_tab(index)
+        QTimer.singleShot(0, restore)
+
     def _open_settings_from_tray(self) -> None:
-        self.show_main()
-        self._select_tab(2)
+        self._request_open_tab(TAB_SETTINGS)
 
     def _on_hotkey_toggled(self, enabled: bool) -> None:
         if enabled:
@@ -418,7 +435,7 @@ class MainWindow(QMainWindow):
             self._ctx.settings, self._ctx.deploy_service,
         )
         self._symbols_widget = widget
-        self._replace_lazy_tab(1, widget, _TABS[1])
+        self._replace_lazy_tab(TAB_SYMBOLS, widget, _TABS[TAB_SYMBOLS])
         return widget
 
     def _ensure_settings_widget(self) -> SettingsWidget:
@@ -437,7 +454,7 @@ class MainWindow(QMainWindow):
         widget.themeChanged.connect(self._on_theme_changed)
         self._settings_widget = widget
         self._settings_widget.sync_autostart_state()
-        self._replace_lazy_tab(2, widget, _TABS[2])
+        self._replace_lazy_tab(TAB_SETTINGS, widget, _TABS[TAB_SETTINGS])
         return widget
 
     def _replace_lazy_tab(self, index: int, widget: QWidget, title: str) -> None:
@@ -451,12 +468,13 @@ class MainWindow(QMainWindow):
             self._tabs.blockSignals(False)
 
     def _on_tab_changed(self, index: int) -> None:
-        if index == 0:
+        if index == TAB_LIBRARY:
             # Phrase mutations refresh themselves; avoid a redundant full table pass on tab activation.
+            self._phrase_manager.refresh_scheme_status()
             return
-        if index == 1:
+        if index == TAB_SYMBOLS:
             self._ensure_symbols_widget().refresh_categories()
-        elif index == 2:
+        elif index == TAB_SETTINGS:
             self._ensure_settings_widget().refresh()
 
     def _select_tab(self, index: int, refresh: bool = True) -> None:
@@ -488,11 +506,15 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+        phrase_manager = getattr(self, "_phrase_manager", None)
+        if phrase_manager is not None:
+            phrase_manager.refresh_scheme_status()
 
     def deploy_now(self) -> None:
         ok, msg = self._ctx.deploy_service.deploy()
         if ok:
             self._ctx.rime_preview_service.invalidate_after_deploy()
+            self._phrase_manager.refresh_scheme_status()
             QMessageBox.information(self, "部署", msg)
         else:
             QMessageBox.warning(self, "部署", msg)
@@ -545,7 +567,7 @@ class MainWindow(QMainWindow):
         self._check_rime_dir()
         self._wire_hotkey()
         self._update_tray_deploy()
-        self._select_tab(0)
+        self._select_tab(TAB_LIBRARY)
 
     def _on_sandbox_toggled(self, _enabled: bool) -> None:
         # 沙盒开关变化：重建仓储（指向副本或真实目录），保持当前页便于看见设置状态。
@@ -559,14 +581,28 @@ class MainWindow(QMainWindow):
         self._update_tray_deploy()
         if self._ctx.settings.is_rime_dir_valid():
             self._select_tab(current_index)
+
     def _check_rime_dir(self) -> None:
         if not self._ctx.settings.is_rime_dir_valid():
-            self._select_tab(2)
+            self._select_tab(TAB_SETTINGS)
             QMessageBox.warning(
                 self, "未设置 Rime 目录",
                 "未检测到有效的 Rime 用户目录，请到「设置」页手动指定。",
             )
 
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.hide()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if (event.type() == QEvent.Type.ActivationChange
+                and self.isActiveWindow()
+                and hasattr(self, "_phrase_manager")):
+            QTimer.singleShot(0, self._phrase_manager.refresh_scheme_status)
     def closeEvent(self, event) -> None:
         # 关闭窗口 → 最小化到托盘，不退出
         event.ignore()

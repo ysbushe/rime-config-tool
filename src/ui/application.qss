@@ -565,6 +565,38 @@ QWidget#PhraseToolbar {
     border: 1px solid @BORDER@;
     border-radius: 6px;
 }
+QWidget#SchemeContextBar,
+QWidget#ImportStats {
+    background: @BG_SURFACE@;
+    border: 1px solid @BORDER@;
+    border-radius: 6px;
+}
+QWidget#SchemeContextBar QPushButton {
+    min-height: 24px;
+    padding: 2px 10px;
+}
+QLabel#SchemeSummary {
+    font-family: @FONT_HEADING@;
+    font-size: 15px;
+    font-weight: bold;
+}
+QLabel#ImportFlow {
+    color: @ACCENT@;
+    font-family: @FONT_HEADING@;
+    font-size: 17px;
+    font-weight: bold;
+}
+QLabel#ImportStatValue {
+    color: @ACCENT@;
+    font-size: 18px;
+    font-weight: bold;
+}
+QCheckBox#ImportWarningConfirmation {
+    background: @ACCENT_SOFT@;
+    border: 1px solid @WARNING_TEXT@;
+    border-radius: 6px;
+    padding: 8px 10px;
+}
 QWidget#PhraseToolbar QPushButton,
 QWidget#PhraseToolbar QComboBox {
     min-height: 26px;

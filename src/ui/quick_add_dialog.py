@@ -71,6 +71,7 @@ class QuickAddDialog(QDialog):
         self._suggestion_generation = 0
         self._suggestion_results: queue.SimpleQueue = queue.SimpleQueue()
         self._pending_suggestion_generations: set[int] = set()
+        self._disposed = False
         self._build_ui()
         # 冲突区按需展开，窗口保留可缩放能力。
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -110,6 +111,8 @@ class QuickAddDialog(QDialog):
             self._text.setFocus()
 
     def _initialize_prefill(self) -> None:
+        if self._disposed:
+            return
         if not self._prefill_initialization_pending:
             return
         self._prefill_initialization_pending = False
@@ -118,6 +121,18 @@ class QuickAddDialog(QDialog):
         self._code.selectAll()
 
     # ------------------------------------------------------------------ #
+    def dispose(self) -> None:
+        """Stop asynchronous UI work before the modal dialog is deleted."""
+        if self._disposed:
+            return
+        self._disposed = True
+        self._suggestion_generation += 1
+        self._pending_suggestion_generations.clear()
+        for timer in (
+            self._timer, self._suggestion_result_timer, self._dictionary_timer,
+        ):
+            timer.stop()
+        self._preview_panel.dispose()
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -285,7 +300,7 @@ class QuickAddDialog(QDialog):
     def _prepare_suggestions(self, generation: int, text: str) -> None:
         """Prepare pinyin and duplicate state away from Qt's event loop."""
         try:
-            suggestions = build_suggestions(text, PinyinService())
+            suggestions = build_suggestions(text, self._pinyin)
             conflicts: dict[str, list] = {}
             if self._repo is not None:
                 for phrase in self._repo.all():

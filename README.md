@@ -4,6 +4,19 @@
 
 ![词库管理主界面](image/01-library-management.png)
 
+## v0.7.1 更新
+
+- 词库管理页在同一行显示 Rime 当前启用的拼音方案、本页实际编辑的词库文件和识别依据。
+- 同时启用多个方案时如实显示完整列表，并将 Rime 记录的历史方案标为“上次使用”。
+- “从其他方案导入”改用直观的来源、去向、数量和处理结果；文件路径与校验步骤收纳到可展开的“技术详情”。有待确认内容时导入按钮仍可点击，程序会明确引导勾选确认项。
+
+## v0.7.0 更新
+
+- 新增“从其他方案导入”向导，可将白霜全拼的 Tab 自定义词库无损导入万象独立词库。
+- 来源 `custom_phrase.txt` 始终只读；目标使用 `wanxiang_user_phrase.txt`，避免万象更新覆盖或两套方案互相改写。
+- 导入前检查格式、特殊编码、动态短语和冲突，提交时创建事务快照、检测外部修改、重新部署并验证生效配置。
+- 万象候选预览在隔离环境完成前明确停用，不再以白霜候选结果代替万象结果。
+
 ## v0.6.5 更新
 
 - 设置页在“开机自动启动”勾选框后显示 Windows 实际启动项状态，明确区分已启用、未启用、被系统禁用及异常情形。
@@ -134,6 +147,8 @@ RIME 配置小工具最初也是为解决这一痛点而开发。它尝试为个
 程序主要维护以下 Rime 文件：
 
 - `custom_phrase.txt`：自定义短语、编码和权重。
+- `wanxiang_user_phrase.txt`：万象拼音独立自定义短语目标，由跨方案导入事务维护。
+- `wanxiang.custom.yaml`：导入时仅维护 `custom_phrase/user_dict` 挂载，其他配置原样保留。
 - `rime_frost.schema.yaml`：输入方案信息与部署检测。
 - `symbols_v.yaml`：符号表分类与条目。
 - `pinyin_display.ini`：本工具保存的拼音显示分隔信息。
@@ -167,8 +182,13 @@ python -m venv .venv
 
 ## 版本与说明
 
-当前版本：`v0.6.5`
+当前版本：`v0.7.1`
 
 - [用户说明](docs/USER_GUIDE.md)
 - [更新记录](docs/RELEASE_NOTES.md)
 - [GitHub Releases](https://github.com/ysbushe/rime-config-tool/releases/latest)
+### 按需输入诊断程序
+
+输入诊断已剥离为独立的 `RimeInputDiagnostics.exe`。主程序启动后不会加载或运行监控；只有在“设置 → 输入诊断（按需运行）”中点击“启动输入诊断”时才会拉起，关闭诊断窗口后监控随即停止。
+
+诊断日志位于 `%LOCALAPPDATA%\RimeConfig\diagnostics\input-events.jsonl`，超过 2 MB 自动轮换。日志只包含进程名、窗口类与矩形、前台进程、鼠标位置和 Ctrl/Alt/Shift/Win 状态；不会读取窗口标题、实际按键、剪贴板或 Rime 组词内容。
