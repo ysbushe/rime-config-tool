@@ -196,7 +196,10 @@ def qss_path(theme: str) -> Path:
 def load_theme_qss(theme: str) -> str:
     """读取模板 QSS，按当前主题令牌字典替换占位符和内置勾选图标 URI。"""
     p = qss_path(theme)
-    qss = QSS_TEMPLATE if getattr(sys, "frozen", False) else p.read_text(encoding="utf-8")
+    if getattr(sys, "frozen", False) and not p.is_file():
+        qss = QSS_TEMPLATE
+    else:
+        qss = p.read_text(encoding="utf-8")
     tokens = THEME_TOKENS.get(theme, THEME_TOKENS["light"])
     for key, value in tokens.items():
         qss = qss.replace(key, value)
