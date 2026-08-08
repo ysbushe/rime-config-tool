@@ -1,7 +1,7 @@
 """后台建立 Rime 系统词典的可查询索引。
 
 系统词典通常由多个 import_tables 组合而成，逐次收藏时扫描源文件会让
-采集窗口明显停顿。这里在后台将当前 Frost 配置的静态词典写入 SQLite，
+采集窗口明显停顿。这里在后台将当前 Frost / 万象配置的静态词典写入 SQLite，
 前台只按“文本 + 编码”查询。它提供的是静态候选参考，不尝试复刻 Rime
 运行时的用户学习、过滤器与翻译器排序。
 """
@@ -13,9 +13,10 @@ import os
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Iterable
+from typing import Callable, Iterable
+import unicodedata
 
-from src.encoding.code_suggestions import raw_code
+from src.encoding.code_suggestions import build_short_code_suggestions, raw_code
 from src.config.paths import user_config_dir
 from src.utils.logger import get_logger
 
@@ -34,8 +35,14 @@ class DictionaryCandidate:
 class SystemDictionaryIndex:
     """异步维护当前 Rime 静态系统词典的轻量查询索引。"""
 
-    _INDEX_VERSION = 3  # Bump when indexed code normalization or schema changes.
-    _SOURCES = (("rime_frost", 1.2), ("melt_eng", 1.1))
+    _INDEX_VERSION = 5  # Bump when indexed code normalization or schema changes.
+    _SOURCES = (
+        ("rime_frost", 1.2),
+        ("wanxiang", 1.2),
+        ("melt_eng", 1.1),
+        ("wanxiang_english", 1.1),
+        ("wanxiang_mixedcode", 1.0),
+    )
 
     def __init__(self, rime_dir: str = "") -> None:
         self._lock = threading.RLock()
@@ -43,6 +50,7 @@ class SystemDictionaryIndex:
         self._state = "unavailable"
         self._thread: threading.Thread | None = None
         self._db_path = user_config_dir() / "system_dictionary_index.sqlite"
+        self._generated_cache: dict[str, list[DictionaryCandidate]] = {}
 
     @property
     def state(self) -> str:
@@ -53,6 +61,7 @@ class SystemDictionaryIndex:
         with self._lock:
             self._rime_dir = Path(rime_dir) if rime_dir else None
             self._state = "unavailable"
+            self._generated_cache.clear()
         self.ensure_ready_async()
 
     def ensure_ready_async(self) -> None:
@@ -79,7 +88,10 @@ class SystemDictionaryIndex:
 
     def lookup(self, text: str, codes: Iterable[str]) -> list[DictionaryCandidate]:
         """返回同文本、同编码的系统词典项；索引未就绪时立即返回空。"""
-        normalized = sorted({raw_code(code) for code in codes if raw_code(code)})
+        normalized = sorted({
+            _normalize_dictionary_code(code)
+            for code in codes if _normalize_dictionary_code(code)
+        })
         if not text or not normalized or self.state != "ready" or not self._db_path.exists():
             return []
         placeholders = ",".join("?" for _ in normalized)
@@ -98,7 +110,7 @@ class SystemDictionaryIndex:
 
     def lookup_code(self, code: str, limit: int = 20) -> list[DictionaryCandidate]:
         """返回某编码的词典项，用于给实时预览候选补充原始权重。"""
-        normalized = raw_code(code)
+        normalized = _normalize_dictionary_code(code)
         if not normalized or self.state != "ready" or not self._db_path.exists():
             return []
         try:
@@ -112,6 +124,90 @@ class SystemDictionaryIndex:
             logger.warning("读取系统词典同码索引失败：%s", exc)
             return []
         return [DictionaryCandidate(*row) for row in rows]
+
+    def lookup_text(self, text: str, limit: int = 20) -> list[DictionaryCandidate]:
+        """返回某字词的全部已知编码，供字词到拼音的反向查询使用。"""
+        normalized = text.strip()
+        if not normalized or self.state != "ready" or not self._db_path.exists():
+            return []
+        try:
+            with sqlite3.connect(self._db_path) as db:
+                rows = db.execute(
+                    "SELECT text, code, source, weight, quality FROM entries "
+                    "WHERE text = ? ORDER BY quality DESC, COALESCE(weight, 0) DESC LIMIT ?",
+                    (normalized, max(1, limit)),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            logger.warning("读取系统词典字词索引失败：%s", exc)
+            return []
+        return [DictionaryCandidate(*row) for row in rows]
+
+    def lookup_generated_code(
+            self, code: str, splitter: Callable[[str], list[str]],
+            limit: int = 20) -> list[DictionaryCandidate]:
+        """Resolve exact supported shorthand without using substring matching."""
+        normalized = _normalize_dictionary_code(code)
+        if (
+            not normalized
+            or self.state != "ready"
+            or not self._db_path.exists()
+        ):
+            return []
+        cached = self._generated_cache.get(normalized)
+        if cached is not None:
+            return cached[:max(1, limit)]
+        first = normalized[0]
+        if not first.isascii() or not first.isalpha():
+            return []
+        upper_bound = chr(ord(first) + 1)
+        scan_limit = 2000
+        length_clause = "length(text) = 1" if len(normalized) == 1 else "length(text) BETWEEN 2 AND 8"
+        pattern_clause = ""
+        parameters: list[object] = [first, upper_bound]
+        if len(normalized) > 1:
+            pattern_clause = " AND (code LIKE ? OR code LIKE ? OR code LIKE ?)"
+            parameters.extend((
+                normalized + "%",
+                first + "%" + normalized[1:],
+                "%".join(normalized) + "%",
+            ))
+        parameters.append(scan_limit)
+        try:
+            with sqlite3.connect(self._db_path) as db:
+                rows = db.execute(
+                    "SELECT text, code, source, weight, quality FROM entries "
+                    f"WHERE code >= ? AND code < ? AND {length_clause}"
+                    f"{pattern_clause} "
+                    "ORDER BY quality DESC, COALESCE(weight, 0) DESC LIMIT ?",
+                    parameters,
+                ).fetchall()
+        except sqlite3.Error as exc:
+            logger.warning("读取系统词典简码索引失败：%s", exc)
+            return []
+
+        matches: list[DictionaryCandidate] = []
+        seen: set[str] = set()
+        for text, full_code, source, weight, quality in rows:
+            if text in seen:
+                continue
+            if len(normalized) == 1:
+                aliases = {full_code[:1]}
+            else:
+                units = splitter(full_code)
+                aliases = {
+                    suggestion.raw_code
+                    for suggestion in build_short_code_suggestions(units)
+                }
+            if normalized not in aliases:
+                continue
+            seen.add(text)
+            matches.append(DictionaryCandidate(
+                text, normalized, source, weight, quality
+            ))
+            if len(matches) >= 100:
+                break
+        self._generated_cache[normalized] = matches
+        return matches[:max(1, limit)]
 
     def rebuild_sync(self) -> None:
         """测试和维护入口：同步完成一次构建。"""
@@ -204,6 +300,7 @@ class SystemDictionaryIndex:
                 db.execute("PRAGMA synchronous = OFF")
                 db.execute("CREATE TABLE entries (text TEXT, code TEXT, source TEXT, weight INTEGER, quality REAL)")
                 db.execute("CREATE INDEX idx_entries_text_code ON entries(text, code)")
+                db.execute("CREATE INDEX idx_entries_code ON entries(code)")
                 db.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT)")
                 for path, source, quality in sources:
                     db.executemany(
@@ -245,7 +342,8 @@ class SystemDictionaryIndex:
                 parts = line.rstrip("\r\n").split("\t")
                 if len(parts) < 2:
                     continue
-                text, code = parts[0].strip(), raw_code(parts[1].strip()).replace(" ", "")
+                text = parts[0].strip()
+                code = _normalize_dictionary_code(parts[1].strip())
                 if not text or not code:
                     continue
                 try:
@@ -253,3 +351,15 @@ class SystemDictionaryIndex:
                 except ValueError:
                     weight = None
                 yield (text, code, source, weight, quality)
+
+
+def _normalize_dictionary_code(code: str) -> str:
+    """Normalize static pinyin to the ASCII form users type in Rime."""
+    value = (code or "").lower().translate(str.maketrans({
+        "ü": "v", "ǖ": "v", "ǘ": "v", "ǚ": "v", "ǜ": "v",
+    }))
+    value = "".join(
+        char for char in unicodedata.normalize("NFD", value)
+        if not unicodedata.combining(char)
+    )
+    return raw_code(value).replace(" ", "")

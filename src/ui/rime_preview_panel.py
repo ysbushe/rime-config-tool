@@ -19,6 +19,7 @@ class RimePreviewPanel(QWidget):
         self.setObjectName("RimePreviewPanel")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._service = preview_service
+        self._slot_count = max(1, min(10, int(getattr(preview_service, "page_size", 5))))
         self._dictionary_index = dictionary_index
         self._repo = repo
         self._reserve_space = reserve_space
@@ -54,7 +55,7 @@ class RimePreviewPanel(QWidget):
 
         self._candidate_cells: list[QLabel] = []
         self._weight_cells: list[QLabel] = []
-        for _ in range(5):
+        for _ in range(self._slot_count):
             candidate = QLabel("")
             candidate.setObjectName("RimePreviewCandidate")
             candidate.setTextFormat(Qt.TextFormat.RichText)
@@ -175,9 +176,11 @@ class RimePreviewPanel(QWidget):
         if not snapshot.candidates:
             self._show_status("输入法候选预览：未找到可显示候选。", "", stop=True)
             return
-        self._show_candidates(snapshot.candidates[:5])
+        self._show_candidates(
+            snapshot.candidates[:self._slot_count], snapshot.message,
+        )
 
-    def _show_candidates(self, candidates) -> None:
+    def _show_candidates(self, candidates, workspace_message: str = "") -> None:
         indexed = {}
         if self._dictionary_index is not None:
             for item in self._dictionary_index.lookup_code(self._code, limit=80):
@@ -225,5 +228,7 @@ class RimePreviewPanel(QWidget):
         detail = "权重说明：同一词典内数值越大通常越靠前；不同词典、用户词频和过滤器仍会影响最终顺序。"
         if current_rank is not None:
             detail += f" 当前采集文本位于第 {current_rank} 候选。"
+        if workspace_message:
+            detail += f" {workspace_message}"
         self._details.setText(detail)
         self.show()

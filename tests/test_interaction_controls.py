@@ -81,25 +81,26 @@ def test_internal_workdir_text_is_rejected_by_both_backends(tmp_path, monkeypatc
 
 def test_settings_group_order(qapp) -> None:
     widget = SettingsWidget(_Settings(), _Autostart(), _Deploy())
-    content_layout = widget._scroll.widget().layout()
-    titles = []
-    for index in range(content_layout.count()):
-        child = content_layout.itemAt(index).widget()
-        if isinstance(child, QGroupBox):
-            titles.append(child.title())
+    sections = {}
+    for section_index in range(widget._sections.count()):
+        scroll = widget._sections.widget(section_index)
+        content_layout = scroll.widget().layout()
+        titles = []
+        for index in range(content_layout.count()):
+            child = content_layout.itemAt(index).widget()
+            if isinstance(child, QGroupBox):
+                titles.append(child.title())
+        sections[widget._sections.tabText(section_index)] = titles
 
-    assert titles == [
-        "Rime 目录与部署",
-        "行为",
-        "词库维护",
-        "输入诊断（按需运行）",
-        "GitHub 更新",
-        "备份与恢复",
-        "开机自启",
-        "受管文件",
-        "扩展词库（只读检测）",
-        "方案信息（只读）",
-    ]
+    assert sections == {
+        "常规": ["Rime 目录与部署", "行为", "开机自启"],
+        "词典与文件": [
+            "受管文件", "扩展词库（只读检测）",
+            "方案信息（只读）", "词库维护",
+        ],
+        "备份与恢复": ["备份与恢复"],
+        "诊断与更新": ["输入诊断（按需运行）", "GitHub 更新"],
+    }
 
 
 def test_settings_shows_windows_startup_approval_status(qapp) -> None:

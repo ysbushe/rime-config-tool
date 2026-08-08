@@ -1,7 +1,7 @@
 """主窗口（MainWindow）。
 
-装配三个选项卡（顶部横向导航 + 堆叠页）：
-    1. 词库管理  2. 符号表  3. 设置
+装配四个稳定工作区（左侧导航 + 懒加载堆叠页）：
+    1. 词库工作台  2. 词典中心  3. 符号管理  4. 设置
 并接线：系统托盘（TrayIcon）、全局热键（HotkeyManager）、开机自启（Autostart）。
 加载风格 A 的 application.qss。
 """
@@ -21,13 +21,17 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
+    QPushButton,
     QSystemTrayIcon,
-    QTabWidget,
     QWidget,
 )
 
 from src.app_context import AppContext
 from src.ui.phrase_manager import PhraseManager
+from src.ui.dictionary_center_dialog import DictionaryCenterDialog
+from src.ui.index_progress import present_index_progress
+from src.ui.navigation_shell import NavigationShell
 from src.ui.settings_widget import SettingsWidget
 from src.ui.symbols_config_widget import SymbolsConfigWidget
 from src.ui.theme import apply_theme, apply_window_theme, set_ink_decor
@@ -40,9 +44,10 @@ logger = get_logger(__name__)
 _QSS_PATH = Path(__file__).resolve().parent / "application.qss"
 
 TAB_LIBRARY = 0
-TAB_SYMBOLS = 1
-TAB_SETTINGS = 2
-_TABS = ["词库管理", "符号表", "设置"]
+TAB_DICTIONARIES = 1
+TAB_SYMBOLS = 2
+TAB_SETTINGS = 3
+_TABS = ["词库工作台", "词典中心", "符号管理", "设置"]
 
 
 class MainWindow(QMainWindow):
@@ -54,13 +59,17 @@ class MainWindow(QMainWindow):
         self._ctx = context
         self._start_minimized = start_minimized
         self._optional_services_started = False
-        self.setWindowTitle(f"RIME 配置小工具 v{__version__}")
-        self.resize(980, 640)
+        self._attached_rime_dir = context.settings.rime_dir
+        self._attached_sandbox_mode = context.settings.sandbox_mode
+        self._base_window_title = f"RIME 配置小工具 v{__version__}"
+        self.setWindowTitle(self._base_window_title)
+        self.resize(1180, 760)
         self._build_ink_decor()
         self._apply_style()
         self._set_app_icon()
 
         self._build_pages()
+        self._build_index_status()
         self._hide_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self._hide_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._hide_shortcut.activated.connect(self.hide)
@@ -81,6 +90,73 @@ class MainWindow(QMainWindow):
         # until the user actually opens the window, keeping Windows login light.
         if not self._start_minimized:
             QTimer.singleShot(800, self._start_optional_services)
+
+    def _build_index_status(self) -> None:
+        """Persistent, non-modal index feedback shared by every workspace."""
+        bar = self.statusBar()
+        bar.setSizeGripEnabled(False)
+        self._index_status_label = QLabel("", self)
+        self._index_progress = QProgressBar(self)
+        self._index_progress.setRange(0, 100)
+        self._index_progress.setTextVisible(True)
+        self._index_progress.setFixedWidth(230)
+        self._index_action = QPushButton("取消构建", self)
+        self._index_action.clicked.connect(self._on_index_action)
+        bar.addWidget(self._index_status_label, 1)
+        bar.addPermanentWidget(self._index_progress)
+        bar.addPermanentWidget(self._index_action)
+        bar.hide()
+        self._index_status_timer = QTimer(self)
+        self._index_status_timer.setInterval(250)
+        self._index_status_timer.timeout.connect(self._refresh_index_status)
+        self._index_status_timer.start()
+
+    def _refresh_index_status(self) -> None:
+        index = self._ctx.system_dictionary_index
+        state = str(getattr(index, "state", ""))
+        progress = dict(getattr(index, "progress", {}) or {})
+        scheme_id = str(getattr(index, "scheme_id", ""))
+        scheme = {"wanxiang": "万象", "rime_frost": "白霜"}.get(
+            scheme_id, "当前方案"
+        )
+        bar = self.statusBar()
+        if state in {"building", "cancelling"}:
+            view = present_index_progress(progress)
+            action = "正在取消" if state == "cancelling" else f"{view.phase_label}中"
+            detail = f" · {view.current_file}" if view.current_file else ""
+            self._index_status_label.setText(
+                f"{action}{scheme}索引 · {view.percent}%{detail}"
+            )
+            self._index_progress.setValue(view.percent)
+            self._index_action.setText("正在取消…" if state == "cancelling" else "取消构建")
+            self._index_action.setEnabled(state == "building")
+            self.setWindowTitle(
+                f"{self._base_window_title} · 正在构建{scheme}索引 {view.percent}%"
+            )
+            bar.show()
+            return
+        self.setWindowTitle(self._base_window_title)
+        if state in {"failed", "cancelled"}:
+            self._index_status_label.setText(
+                "索引构建已取消。" if state == "cancelled"
+                else "索引构建失败；暂时只查询个人词库。"
+            )
+            self._index_progress.hide()
+            self._index_action.setText("重新构建")
+            self._index_action.setEnabled(True)
+            bar.show()
+            return
+        self._index_progress.show()
+        bar.hide()
+
+    def _on_index_action(self) -> None:
+        index = self._ctx.system_dictionary_index
+        state = str(getattr(index, "state", ""))
+        if state == "building":
+            index.cancel_build()
+        elif state in {"failed", "cancelled", "unavailable"}:
+            index.ensure_ready_async()
+        self._refresh_index_status()
 
     # ------------------------------------------------------------------ #
     # 样式
@@ -198,32 +274,35 @@ class MainWindow(QMainWindow):
         return icon
 
     # ------------------------------------------------------------------ #
-    # 顶部选项卡 + 堆叠页
+    # 左侧主导航 + 堆叠页
     # ------------------------------------------------------------------ #
     def _build_pages(self) -> None:
         ctx = self._ctx
-        self._tabs = QTabWidget()
-        self._tabs.setTabPosition(QTabWidget.TabPosition.North)
-        self._tabs.setObjectName("TopTabs")
-        # 顶部选项卡按窗口宽度平均分配
-        self._tabs.setDocumentMode(True)
-        self._tabs.tabBar().setExpanding(True)
+        # NavigationShell deliberately preserves the tiny tab-like API used by
+        # the existing page lifecycle, while presenting a stable sidebar.
+        self._tabs = NavigationShell(self)
 
         self._phrase_manager = PhraseManager(
             ctx.phrase_repo, ctx.group_service, ctx.backup_service,
             ctx.settings, ctx.deploy_service, ctx.pinyin_service,
             ctx.system_dictionary_index, ctx.rime_preview_service, ctx.metadata_store,
+            data_engine_client=ctx.data_engine_client,
+            transaction_writer=ctx.file_transaction_writer,
         )
         # Infrequently used pages are created on first activation. This keeps
         # the first usable window focused on the word library.
         self._symbols_widget: SymbolsConfigWidget | None = None
         self._settings_widget: SettingsWidget | None = None
+        self._dictionary_widget: DictionaryCenterDialog | None = None
+        self._dictionary_scope = "all"
+        self._dictionary_placeholder = QWidget()
         self._symbols_placeholder = QWidget()
         self._settings_placeholder = QWidget()
         self._phrase_manager.favoriteCompleted.connect(self._on_favorite_completed)
         self._phrase_manager.editCompleted.connect(self._on_edit_completed)
 
         self._tabs.addTab(self._phrase_manager, _TABS[TAB_LIBRARY])
+        self._tabs.addTab(self._dictionary_placeholder, _TABS[TAB_DICTIONARIES])
         self._tabs.addTab(self._symbols_placeholder, _TABS[TAB_SYMBOLS])
         self._tabs.addTab(self._settings_placeholder, _TABS[TAB_SETTINGS])
         self._tabs.currentChanged.connect(self._on_tab_changed)
@@ -427,6 +506,47 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # 选项卡切换
     # ------------------------------------------------------------------ #
+    def _ensure_dictionary_widget(self) -> DictionaryCenterDialog:
+        if self._dictionary_widget is not None:
+            return self._dictionary_widget
+        widget = self._phrase_manager.create_dictionary_center(
+            scope=self._dictionary_scope,
+            parent=self._tabs,
+            embedded=True,
+        )
+        self._dictionary_widget = widget
+        self._replace_lazy_tab(
+            TAB_DICTIONARIES, widget, _TABS[TAB_DICTIONARIES]
+        )
+        return widget
+
+    def _open_dictionary_page(self, scope: str = "all") -> None:
+        if self._phrase_manager.has_unsaved_changes():
+            QMessageBox.warning(
+                self,
+                "存在未保存修改",
+                "请先保存或撤销词库工作台中的修改，再打开词典中心。",
+            )
+            self._select_tab(TAB_LIBRARY)
+            return
+        if scope != self._dictionary_scope and self._dictionary_widget is not None:
+            self._reset_dictionary_widget()
+        self._dictionary_scope = scope
+        self._select_tab(TAB_DICTIONARIES)
+
+    def _reset_dictionary_widget(self) -> None:
+        widget = self._dictionary_widget
+        if widget is None:
+            return
+        widget.dispose()
+        placeholder = QWidget(self._tabs)
+        self._dictionary_widget = None
+        self._dictionary_placeholder = placeholder
+        self._replace_lazy_tab(
+            TAB_DICTIONARIES, placeholder, _TABS[TAB_DICTIONARIES]
+        )
+        widget.deleteLater()
+
     def _ensure_symbols_widget(self) -> SymbolsConfigWidget:
         if self._symbols_widget is not None:
             return self._symbols_widget
@@ -446,6 +566,8 @@ class MainWindow(QMainWindow):
             self._ctx.deploy_service, self._ctx.schema_repo,
             backup=self._ctx.backup_service,
             health_opener=self._phrase_manager.open_health_check,
+            dictionary_center_opener=self._open_dictionary_page,
+            data_engine_client=self._ctx.data_engine_client,
         )
         widget.rimeDirChanged.connect(self._on_rime_dir_changed)
         widget.hotkeyToggled.connect(self._on_hotkey_toggled)
@@ -472,10 +594,22 @@ class MainWindow(QMainWindow):
             # Phrase mutations refresh themselves; avoid a redundant full table pass on tab activation.
             self._phrase_manager.refresh_scheme_status()
             return
-        if index == TAB_SYMBOLS:
+        if index == TAB_DICTIONARIES:
+            if self._phrase_manager.has_unsaved_changes():
+                QMessageBox.warning(
+                    self,
+                    "存在未保存修改",
+                    "请先保存或撤销词库工作台中的修改，再打开词典中心。",
+                )
+                QTimer.singleShot(0, lambda: self._select_tab(TAB_LIBRARY))
+                return
+            self._ensure_dictionary_widget()
+        elif index == TAB_SYMBOLS:
             self._ensure_symbols_widget().refresh_categories()
         elif index == TAB_SETTINGS:
-            self._ensure_settings_widget().refresh()
+            # Settings changes refresh themselves.  Re-entering the tab must not
+            # rescan every configured dictionary on the GUI thread.
+            self._ensure_settings_widget()
 
     def _select_tab(self, index: int, refresh: bool = True) -> None:
         """切换选项卡；热键弹窗路径可跳过切页刷新。"""
@@ -556,23 +690,36 @@ class MainWindow(QMainWindow):
             self._ctx.system_dictionary_index,
             self._ctx.rime_preview_service, self._ctx.metadata_store,
         )
+        self._reset_dictionary_widget()
         if self._symbols_widget is not None:
             self._symbols_widget._repo = self._ctx.symbols_repo
         if self._settings_widget is not None:
             self._settings_widget.set_schema_repo(self._ctx.schema_repo)
 
     def _on_rime_dir_changed(self, new_dir: str) -> None:
+        if not self._phrase_manager.confirm_discard_changes("切换 Rime 目录"):
+            self._ctx.settings.rime_dir = self._attached_rime_dir
+            if self._settings_widget is not None:
+                self._settings_widget.refresh()
+            return
         self._ctx.rebuild_repos()
+        self._attached_rime_dir = new_dir
         self._reattach_repos()
         self._check_rime_dir()
         self._wire_hotkey()
         self._update_tray_deploy()
         self._select_tab(TAB_LIBRARY)
 
-    def _on_sandbox_toggled(self, _enabled: bool) -> None:
+    def _on_sandbox_toggled(self, enabled: bool) -> None:
+        if not self._phrase_manager.confirm_discard_changes("切换沙盒模式"):
+            self._ctx.settings.sandbox_mode = self._attached_sandbox_mode
+            if self._settings_widget is not None:
+                self._settings_widget.refresh()
+            return
         # 沙盒开关变化：重建仓储（指向副本或真实目录），保持当前页便于看见设置状态。
         current_index = self._tabs.currentIndex()
         self._ctx.rebuild_repos()
+        self._attached_sandbox_mode = enabled
         self._reattach_repos()
         self._check_rime_dir()
         self._wire_hotkey()
@@ -583,6 +730,13 @@ class MainWindow(QMainWindow):
             self._select_tab(current_index)
 
     def _check_rime_dir(self) -> None:
+        if self._ctx.settings.is_rime_dir_valid():
+            if self._ctx.settings.sandbox_mode:
+                self._tabs.set_connection_status("●  已连接 Rime · 沙盒", "warning")
+            else:
+                self._tabs.set_connection_status("●  已连接 Rime", "ready")
+            return
+        self._tabs.set_connection_status("●  未连接 Rime", "error")
         if not self._ctx.settings.is_rime_dir_valid():
             self._select_tab(TAB_SETTINGS)
             QMessageBox.warning(
@@ -614,6 +768,10 @@ class MainWindow(QMainWindow):
         )
 
     def quit_app(self) -> None:
+        if not self._phrase_manager.confirm_discard_changes("退出程序"):
+            self.show_main()
+            self._select_tab(TAB_LIBRARY)
+            return
         self._ctx.hotkey_manager.unregister()
         self._ctx.rime_preview_service.close()
         QApplication.quit()

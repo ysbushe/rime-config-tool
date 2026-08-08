@@ -118,6 +118,7 @@ class ImportPlan:
     source_count: int
     import_count: int
     skipped_exact: int
+    skipped_different: int
     warnings: list[CompatibilityWarning] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
 
@@ -130,6 +131,7 @@ class ImportPlan:
 class ImportResult:
     imported: int
     skipped_exact: int
+    skipped_different: int
     snapshot_dir: Path
     deploy_message: str
 
@@ -353,14 +355,19 @@ class WanxiangImportService:
                 PhraseLine("header", "# Managed by RIME 配置小工具; source remains unchanged.", 2),
             ], source.newline, True, source.has_bom)
 
-        existing = {entry.key for entry in target.entries}
+        existing = {entry.key: entry for entry in target.entries}
         accepted: list[PhraseEntry] = []
-        skipped = 0
+        skipped_exact = 0
+        skipped_different = 0
         for entry in source.entries:
-            if entry.key in existing:
-                skipped += 1
+            current = existing.get(entry.key)
+            if current is not None:
+                if current.raw == entry.raw:
+                    skipped_exact += 1
+                else:
+                    skipped_different += 1
                 continue
-            existing.add(entry.key)
+            existing[entry.key] = entry
             accepted.append(entry)
         target.append_entries(accepted)
 
@@ -379,7 +386,8 @@ class WanxiangImportService:
             patch_bytes=patch_bytes,
             source_count=len(source.entries),
             import_count=len(accepted),
-            skipped_exact=skipped,
+            skipped_exact=skipped_exact,
+            skipped_different=skipped_different,
             warnings=scan_compatibility(accepted),
             blockers=blockers,
         )
@@ -418,7 +426,13 @@ class WanxiangImportService:
             if (plan.target_path.read_bytes() != plan.target_bytes
                     or plan.patch_path.read_bytes() != plan.patch_bytes):
                 raise ImportExecutionError("目标文件在部署期间被外部修改。")
-            return ImportResult(plan.import_count, plan.skipped_exact, snapshot, message)
+            return ImportResult(
+                plan.import_count,
+                plan.skipped_exact,
+                plan.skipped_different,
+                snapshot,
+                message,
+            )
         except Exception as exc:
             conflicts = self._restore_snapshot(snapshot, written)
             if conflicts:

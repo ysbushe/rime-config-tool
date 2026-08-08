@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -51,13 +52,45 @@ class SymbolsConfigWidget(QWidget):
 
     # ------------------------------------------------------------------ #
     def _build_ui(self) -> None:
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 18, 22, 14)
         root.setSpacing(12)
 
+        page_header = QWidget(self)
+        page_header.setObjectName("PageHeader")
+        header_layout = QHBoxLayout(page_header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        titles = QVBoxLayout()
+        titles.setSpacing(3)
+        title = QLabel("符号管理", page_header)
+        title.setObjectName("PageTitle")
+        subtitle = QLabel("维护 symbols_v.yaml 中的分类和符号候选", page_header)
+        subtitle.setObjectName("PageSubtitle")
+        titles.addWidget(title)
+        titles.addWidget(subtitle)
+        header_layout.addLayout(titles)
+        header_layout.addStretch(1)
+        self._btn_add_sym = QPushButton("+ 新增符号", page_header)
+        self._btn_add_sym.setObjectName("Primary")
+        self._btn_add_sym.clicked.connect(self._on_add_symbol)
+        header_layout.addWidget(self._btn_add_sym)
+        root.addWidget(page_header)
+
+        workspace = QSplitter(Qt.Orientation.Horizontal, self)
+        workspace.setObjectName("LibraryWorkspace")
+        workspace.setChildrenCollapsible(False)
+        workspace.setHandleWidth(8)
+
         # 左侧分类
-        left = QVBoxLayout()
-        left.addWidget(QLabel("分类"))
-        self._cats = QListWidget()
+        left_widget = QWidget(workspace)
+        left_widget.setObjectName("GroupColumn")
+        left = QVBoxLayout(left_widget)
+        left.setContentsMargins(12, 12, 8, 12)
+        category_title = QLabel("分类", left_widget)
+        category_title.setObjectName("GroupTitle")
+        left.addWidget(category_title)
+        self._cats = QListWidget(left_widget)
+        self._cats.setObjectName("CategoryList")
         self._cats.currentItemChanged.connect(self._on_category_changed)
         left.addWidget(self._cats)
         cat_actions = QHBoxLayout()
@@ -69,11 +102,15 @@ class SymbolsConfigWidget(QWidget):
         cat_actions.addWidget(self._btn_add_cat)
         cat_actions.addWidget(self._btn_del_cat)
         left.addLayout(cat_actions)
-        root.addLayout(left, 1)
+        workspace.addWidget(left_widget)
 
         # 右侧符号
-        right = QVBoxLayout()
+        right_widget = QWidget(workspace)
+        right_widget.setObjectName("TableWorkspace")
+        right = QVBoxLayout(right_widget)
+        right.setContentsMargins(8, 12, 12, 12)
         self._cat_title = QLabel("符号条目")
+        self._cat_title.setObjectName("WorkspaceTitle")
         right.addWidget(self._cat_title)
 
         self._table = QTableWidget(0, 2)
@@ -85,23 +122,26 @@ class SymbolsConfigWidget(QWidget):
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setColumnWidth(0, 200)
         right.addWidget(self._table, 1)
+        workspace.addWidget(right_widget)
+        workspace.setStretchFactor(0, 0)
+        workspace.setStretchFactor(1, 1)
+        workspace.setSizes([220, 820])
+        root.addWidget(workspace, 1)
 
-        sym_actions = QHBoxLayout()
-        self._btn_add_sym = QPushButton("+ 符号")
-        self._btn_add_sym.setObjectName("Primary")
-        self._btn_add_sym.clicked.connect(self._on_add_symbol)
+        footer = QWidget(self)
+        footer.setObjectName("PageActionBar")
+        sym_actions = QHBoxLayout(footer)
+        sym_actions.setContentsMargins(10, 7, 8, 7)
+        self._status = QLabel("")
+        self._status.setObjectName("WorkspaceStatus")
+        self._status.setProperty("role", "info")
+        sym_actions.addWidget(self._status, 1)
         self._btn_save = QPushButton("保存符号表")
         self._btn_save.setObjectName("Primary")
         self._btn_save.clicked.connect(self._on_save)
         self._btn_save.setEnabled(False)
-        sym_actions.addWidget(self._btn_add_sym)
         sym_actions.addWidget(self._btn_save)
-        right.addLayout(sym_actions)
-
-        self._status = QLabel("")
-        self._status.setProperty("role", "info")
-        right.addWidget(self._status)
-        root.addLayout(right, 2)
+        root.addWidget(footer)
 
     # ------------------------------------------------------------------ #
     def refresh_categories(self, force: bool = False) -> None:

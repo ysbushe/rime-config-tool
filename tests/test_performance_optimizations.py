@@ -1,6 +1,8 @@
 """Regression coverage for low-overhead UI and preview-service paths."""
 from __future__ import annotations
 
+from time import perf_counter
+import threading
 from unittest.mock import MagicMock
 
 from src.repo.phrase_repo import Phrase
@@ -79,3 +81,64 @@ def test_preview_first_query_is_fast_then_debounced(qapp) -> None:
 def test_preview_engine_stays_warm_for_ten_minutes() -> None:
     service = RimePreviewService("C:/Rime")
     assert service._idle_timeout_seconds == 10 * 60
+
+
+def test_reentering_settings_tab_does_not_refresh_dictionary_catalog(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow, TAB_LIBRARY, TAB_SETTINGS
+
+    window = MainWindow(app_context)
+    window._tabs.setCurrentIndex(TAB_SETTINGS)
+    assert window._settings_widget is not None
+    refresh = MagicMock()
+    window._settings_widget.refresh = refresh
+
+    window._tabs.setCurrentIndex(TAB_LIBRARY)
+    window._tabs.setCurrentIndex(TAB_SETTINGS)
+
+    refresh.assert_not_called()
+    window.close()
+
+
+def test_slow_dictionary_catalog_does_not_block_settings_construction(
+    qapp, app_context, monkeypatch,
+) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    release = threading.Event()
+
+    def slow_snapshot(_base):
+        release.wait(2)
+        return {"schemes": (), "catalogs": {}, "extensions": {
+            "english": (), "mixed": (), "display": (),
+        }}
+
+    monkeypatch.setattr(SettingsWidget, "_build_dictionary_snapshot", slow_snapshot)
+    started = perf_counter()
+    widget = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+    )
+    elapsed = perf_counter() - started
+
+    release.set()
+    # The contract is that construction does not wait for the two-second scan.
+    # Qt stylesheet polishing can vary substantially under the full Windows suite.
+    assert elapsed < 1.5
+    widget.close()
+
+
+def test_settings_are_split_into_stable_task_sections(qapp, app_context) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    widget = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+    )
+
+    assert [
+        widget._sections.tabText(index)
+        for index in range(widget._sections.count())
+    ] == ["常规", "词典与文件", "备份与恢复", "诊断与更新"]
+    widget.close()

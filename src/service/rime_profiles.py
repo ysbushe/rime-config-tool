@@ -33,10 +33,24 @@ class SchemeDisplayState:
 
 
 _KNOWN_SCHEMES = (
-    ("rime_frost", "白霜拼音", "rime_frost.schema.yaml"),
-    ("wanxiang", "万象拼音", "wanxiang.schema.yaml"),
+    (
+        "rime_frost", "白霜拼音", "rime_frost.schema.yaml",
+        (("rime_frost", 1.2), ("melt_eng", 1.1), ("radical_pinyin", 0.9)),
+    ),
+    (
+        "wanxiang", "万象拼音", "wanxiang.schema.yaml",
+        (
+            ("wanxiang", 1.2), ("wanxiang_english", 1.1),
+            ("wanxiang_mixedcode", 1.0), ("wanxiang_reverse", 0.9),
+        ),
+    ),
 )
-_SCHEME_NAMES = {schema_id: name for schema_id, name, _filename in _KNOWN_SCHEMES}
+_SCHEME_NAMES = {
+    schema_id: name for schema_id, name, _filename, _roots in _KNOWN_SCHEMES
+}
+_SCHEME_ROOTS = {
+    schema_id: roots for schema_id, _name, _filename, roots in _KNOWN_SCHEMES
+}
 
 
 def _read_yaml(path: Path) -> dict:
@@ -97,6 +111,16 @@ def scheme_display_name(schema_id: str) -> str:
     return _SCHEME_NAMES.get(schema_id, f"未识别（{schema_id}）")
 
 
+def scheme_title(schema_id: str) -> str:
+    """Return a compact title for selectors that already show compatibility."""
+    return _SCHEME_NAMES.get(schema_id, schema_id or "未识别方案")
+
+
+def scheme_dictionary_roots(schema_id: str) -> tuple[tuple[str, float], ...]:
+    """Return the ordered dictionary roots and translator quality for a scheme."""
+    return _SCHEME_ROOTS.get(schema_id, ())
+
+
 def scheme_display_state(rime_dir: str | Path) -> SchemeDisplayState:
     """Build a concise, honest status for the library page."""
     root = Path(rime_dir)
@@ -153,28 +177,23 @@ def detect_scheme_profiles(rime_dir: str | Path) -> tuple[SchemeProfile, ...]:
             installed=(root / filename).is_file(),
             active=schema_id in active,
         )
-        for schema_id, display_name, filename in _KNOWN_SCHEMES
+        for schema_id, display_name, filename, _roots in _KNOWN_SCHEMES
     )
 
 
 def safe_preview_schema(rime_dir: str | Path) -> tuple[str | None, str]:
-    """Return a safe schema id or an explicit reason for disabling preview."""
+    """Return a schema that can run inside the disposable preview workspace."""
     root = Path(rime_dir)
     active = active_schema_ids(root)
     if "rime_frost" in active:
         return "rime_frost", ""
     if "wanxiang" in active:
-        return None, (
-            "当前启用万象拼音；隔离预览环境尚未就绪，"
-            "为避免访问真实万象用户库，候选预览已停用。"
-        )
+        return "wanxiang", "万象候选将在独立用户目录中运行。"
     if active:
         return None, "当前启用方案尚未通过候选预览兼容性验证。"
     if (root / "rime_frost.schema.yaml").is_file():
         return "rime_frost", ""
     if (root / "wanxiang.schema.yaml").is_file():
-        return None, (
-            "仅检测到万象拼音；隔离预览环境尚未就绪，候选预览已停用。"
-        )
+        return "wanxiang", "万象候选将在独立用户目录中运行。"
     return None, "未检测到可安全预览的拼音方案。"
 

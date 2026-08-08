@@ -98,13 +98,16 @@ class GroupService:
     # ------------------------------------------------------------------ #
     # 持久化
     # ------------------------------------------------------------------ #
-    def load(self) -> None:
+    def load(self, force: bool = False) -> None:
         if not self._path.exists():
             self._state = GroupState()
             return
         # ini 签名缓存：文件未变化且已载入过 → 跳过重解析（减少卡顿）
         sig = _grp_sig(self._path)
-        if sig and self._cache.cached_sig(self._path) == sig and self._state.groups:
+        if (
+            not force and sig and self._cache.cached_sig(self._path) == sig
+            and self._state.groups
+        ):
             logger.info("分组 sidecar 未变化，跳过解析（缓存命中）：%s", self._path)
             return
         try:
@@ -122,14 +125,29 @@ class GroupService:
         try:
             write_text_utf8(
                 self._path,
-                json.dumps(
-                    {"groups": self._state.groups, "membership": self._state.membership},
-                    ensure_ascii=False, indent=2,
-                ),
+                self.serialized_text(),
             )
-            self._cache.update(self._path)
+            self.mark_saved()
         except Exception as exc:
             logger.warning("保存分组文件失败：%s", exc)
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    def serialized_text(self) -> str:
+        return json.dumps(
+            {"groups": self._state.groups, "membership": self._state.membership},
+            ensure_ascii=False, indent=2,
+        )
+
+    def mark_saved(self) -> None:
+        if self._enabled:
+            self._cache.update(self._path)
 
     # ------------------------------------------------------------------ #
     # 分组定义
@@ -193,7 +211,8 @@ class GroupService:
         return self._state.membership.get(f"{text}\t{code}", "")
 
     def remap_entry_key(self, old_text: str, old_code: str,
-                        new_text: str, new_code: str) -> None:
+                        new_text: str, new_code: str,
+                        save: bool = True) -> None:
         """词条文本/编码变更后，迁移其分组归属（旧 key → 新 key）。"""
         old_key = f"{old_text}\t{old_code}"
         new_key = f"{new_text}\t{new_code}"
@@ -204,7 +223,8 @@ class GroupService:
             return
         # 新 key 已存在归属则保留原值，否则写入迁移后的分组
         self._state.membership.setdefault(new_key, grp)
-        self.save()
+        if save:
+            self.save()
 
     def entries_of(self, group: str) -> List[str]:
         """返回某分组的 entry key 列表。"""

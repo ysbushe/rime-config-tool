@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QKeySequenceEdit,
     QScrollArea,
     QSizePolicy,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -51,6 +52,12 @@ from src.ui.click_activated_spin import ClickActivatedSpinBox
 from src.settings import Settings
 from src.service.autostart import Autostart
 from src.service.deploy_service import DeployService
+from src.service.data_engine_service import DataEngineClient
+from src.service.dictionary_catalog import (
+    dictionary_catalog_signature,
+    dictionary_catalog_snapshot,
+)
+from src.service.rime_profiles import scheme_title
 from src.service.input_diagnostics_launcher import (
     diagnostics_process_running,
     launch_input_diagnostics,
@@ -169,8 +176,10 @@ class SettingsWidget(QWidget):
                  deploy: DeployService, schema_repo: SchemaRepo | None = None,
                  backup: BackupService | None = None,
                  health_opener=None,
+                 dictionary_center_opener=None,
                  diagnostics_launcher=None,
                  diagnostics_process_checker=None,
+                 data_engine_client: DataEngineClient | None = None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._settings = settings
@@ -178,6 +187,8 @@ class SettingsWidget(QWidget):
         self._deploy = deploy
         self._schema_repo = schema_repo
         self._health_opener = health_opener
+        self._dictionary_center_opener = dictionary_center_opener
+        self._data_engine_client = data_engine_client
         self._diagnostics_launcher = diagnostics_launcher or launch_input_diagnostics
         self._diagnostics_process_checker = (
             diagnostics_process_checker or diagnostics_process_running
@@ -194,6 +205,12 @@ class SettingsWidget(QWidget):
         self._extension_labels: dict[str, QLabel] = {}
         self._extension_open: dict[str, QPushButton] = {}
         self._extension_paths: dict[str, Path] = {}
+        self._dictionary_results: queue.SimpleQueue[tuple[int, dict | None, str]] = queue.SimpleQueue()
+        self._dictionary_generation = 0
+        self._dictionary_refresh_key: tuple | None = None
+        self._dictionary_poll = QTimer(self)
+        self._dictionary_poll.setInterval(50)
+        self._dictionary_poll.timeout.connect(self._drain_dictionary_results)
         self._backup_versions_signature: tuple[str, str, int] | None = None
         self._update_results: queue.SimpleQueue[tuple[bool, str, bool]] = queue.SimpleQueue()
         self._update_poll = QTimer(self)
@@ -243,29 +260,7 @@ class SettingsWidget(QWidget):
         return selector
 
     # ------------------------------------------------------------------ #
-    def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-
-        self._scroll = QScrollArea(self)
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self._scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
-        )
-
-        content = QWidget()
-        content.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        root = QVBoxLayout(content)
-        root.setSpacing(12)
-
-        # Rime 目录 + 部署（合并为一组：两者同属 Rime 部署功能）
+    def _build_rime_group(self) -> QGroupBox:
         g_rime = QGroupBox("Rime 目录与部署")
         rime_form = QFormLayout(g_rime)
 
@@ -298,9 +293,10 @@ class SettingsWidget(QWidget):
         self._btn_deploy.setObjectName("Primary")
         self._btn_deploy.clicked.connect(self._on_deploy)
         rime_form.addRow(self._btn_deploy)
-        root.addWidget(g_rime)
+        return g_rime
 
-        # 方案信息（只读）
+    def _build_dictionary_groups(
+            self) -> tuple[QGroupBox, QGroupBox, QGroupBox, QGroupBox]:
         g_schema = QGroupBox("方案信息（只读）")
         schema_form = QFormLayout(g_schema)
         self._lbl_schema_name = QLabel()
@@ -328,6 +324,19 @@ class SettingsWidget(QWidget):
             row.addWidget(open_button)
             files_form.addRow(f"{purpose}：", row)
 
+        self._dictionary_catalog_label = QLabel()
+        self._dictionary_catalog_label.setWordWrap(True)
+        self._dictionary_catalog_label.setProperty("role", "info")
+        self._dictionary_catalog_button = QPushButton("管理")
+        self._dictionary_catalog_button.setFixedWidth(58)
+        self._dictionary_catalog_button.clicked.connect(
+            lambda: self._open_dictionary_center("all")
+        )
+        catalog_row = QHBoxLayout()
+        catalog_row.addWidget(self._dictionary_catalog_label, 1)
+        catalog_row.addWidget(self._dictionary_catalog_button)
+        files_form.addRow("当前方案词典：", catalog_row)
+
         g_extensions = QGroupBox("扩展词库（只读检测）")
         extensions_form = QFormLayout(g_extensions)
         for key, title in (
@@ -349,8 +358,31 @@ class SettingsWidget(QWidget):
             row.addWidget(open_button)
             extensions_form.addRow(f"{title}：", row)
 
+        self._extension_catalog_label = QLabel()
+        self._extension_catalog_label.setWordWrap(True)
+        self._extension_catalog_label.setProperty("role", "info")
+        self._extension_catalog_button = QPushButton("查看")
+        self._extension_catalog_button.setFixedWidth(58)
+        self._extension_catalog_button.clicked.connect(
+            lambda: self._open_dictionary_center("extensions")
+        )
+        extension_catalog_row = QHBoxLayout()
+        extension_catalog_row.addWidget(self._extension_catalog_label, 1)
+        extension_catalog_row.addWidget(self._extension_catalog_button)
+        extensions_form.addRow("当前方案扩展词典：", extension_catalog_row)
 
-        # 行为
+        g_library = QGroupBox("词库维护")
+        library_layout = QHBoxLayout(g_library)
+        self._btn_library_health = QPushButton("词库检查")
+        self._btn_library_health.setObjectName("Primary")
+        self._btn_library_health.setEnabled(self._health_opener is not None)
+        self._btn_library_health.clicked.connect(self._on_library_health)
+        library_layout.addWidget(QLabel("检查空值、权重、重复项和无效分组。"))
+        library_layout.addStretch(1)
+        library_layout.addWidget(self._btn_library_health)
+        return g_files, g_extensions, g_schema, g_library
+
+    def _build_behavior_group(self) -> QGroupBox:
         g_behavior = QGroupBox("行为")
         b_form = QFormLayout(g_behavior)
         self._cb_autodeploy = VisibleCheckBox("写文件后自动重新部署")
@@ -418,19 +450,9 @@ class SettingsWidget(QWidget):
         b_form.addRow("主题：", self._theme_selector)
         if self._dev_controls_visible:
             b_form.addRow(self._cb_sandbox)
-        root.addWidget(g_behavior)
+        return g_behavior
 
-        g_library = QGroupBox("词库维护")
-        library_layout = QHBoxLayout(g_library)
-        self._btn_library_health = QPushButton("词库检查")
-        self._btn_library_health.setObjectName("Primary")
-        self._btn_library_health.setEnabled(self._health_opener is not None)
-        self._btn_library_health.clicked.connect(self._on_library_health)
-        library_layout.addWidget(QLabel("检查空值、权重、重复项和无效分组。"))
-        library_layout.addStretch(1)
-        library_layout.addWidget(self._btn_library_health)
-        root.addWidget(g_library)
-
+    def _build_diagnostics_groups(self) -> tuple[QGroupBox, QGroupBox]:
         g_diagnostics = QGroupBox("输入诊断（按需运行）")
         diagnostics_layout = QVBoxLayout(g_diagnostics)
         diagnostics_row = QHBoxLayout()
@@ -449,7 +471,6 @@ class SettingsWidget(QWidget):
         self._lbl_diagnostics_status.setVisible(False)
         diagnostics_layout.addLayout(diagnostics_row)
         diagnostics_layout.addWidget(self._lbl_diagnostics_status)
-        root.addWidget(g_diagnostics)
 
         g_github = QGroupBox("GitHub 更新")
         github_layout = QVBoxLayout(g_github)
@@ -464,8 +485,9 @@ class SettingsWidget(QWidget):
         github_row.addWidget(self._btn_check_update)
         github_layout.addLayout(github_row)
         github_layout.addWidget(self._lbl_update_status)
-        root.addWidget(g_github)
+        return g_diagnostics, g_github
 
+    def _build_backup_group(self) -> QGroupBox:
         g_backup = QGroupBox("备份与恢复")
         backup_form = QFormLayout(g_backup)
         backup_path_row = QHBoxLayout()
@@ -528,9 +550,9 @@ class SettingsWidget(QWidget):
         self._lbl_backup_status.setProperty("role", "info")
         self._lbl_backup_status.setVisible(False)
         backup_form.addRow(self._lbl_backup_status)
-        root.addWidget(g_backup)
+        return g_backup
 
-        # 自启
+    def _build_autostart_group(self) -> QGroupBox:
         g_start = QGroupBox("开机自启")
         s_form = QFormLayout(g_start)
         self._cb_autostart = VisibleCheckBox("开机自动启动")
@@ -546,16 +568,75 @@ class SettingsWidget(QWidget):
         autostart_layout.addWidget(self._lbl_autostart_status)
         autostart_layout.addStretch(1)
         s_form.addRow(autostart_row)
-        root.addWidget(g_start)
+        return g_start
 
-        # 状态信息置底：先受管文件，最后为只读方案信息。
-        root.addWidget(g_files)
-        root.addWidget(g_extensions)
-        root.addWidget(g_schema)
+    def _build_ui(self) -> None:
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(22, 18, 22, 14)
+        outer.setSpacing(12)
 
-        root.addStretch(1)
-        self._scroll.setWidget(content)
-        outer.addWidget(self._scroll)
+        page_header = QWidget(self)
+        page_header.setObjectName("PageHeader")
+        header_layout = QVBoxLayout(page_header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(3)
+        title = QLabel("设置", page_header)
+        title.setObjectName("PageTitle")
+        subtitle = QLabel(
+            "按任务分类管理 Rime 环境、词典文件、备份与诊断",
+            page_header,
+        )
+        subtitle.setObjectName("PageSubtitle")
+        header_layout.addWidget(title)
+        header_layout.addWidget(subtitle)
+        outer.addWidget(page_header)
+
+        g_rime = self._build_rime_group()
+        g_files, g_extensions, g_schema, g_library = (
+            self._build_dictionary_groups()
+        )
+        g_behavior = self._build_behavior_group()
+        g_diagnostics, g_github = self._build_diagnostics_groups()
+        g_backup = self._build_backup_group()
+        g_start = self._build_autostart_group()
+        self._sections = QTabWidget(self)
+        self._sections.setObjectName("SettingsSections")
+        self._sections.setDocumentMode(True)
+        self._sections.addTab(
+            self._settings_section_page(g_rime, g_behavior, g_start), "常规",
+        )
+        self._sections.addTab(
+            self._settings_section_page(
+                g_files, g_extensions, g_schema, g_library,
+            ),
+            "词典与文件",
+        )
+        self._sections.addTab(
+            self._settings_section_page(g_backup), "备份与恢复",
+        )
+        self._sections.addTab(
+            self._settings_section_page(g_diagnostics, g_github), "诊断与更新",
+        )
+        outer.addWidget(self._sections)
+
+    def _settings_section_page(self, *groups: QGroupBox) -> QScrollArea:
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        content = QWidget(scroll)
+        content.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred,
+        )
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(12, 8, 12, 12)
+        layout.setSpacing(12)
+        for group in groups:
+            layout.addWidget(group)
+        layout.addStretch(1)
+        scroll.setWidget(content)
+        return scroll
 
     # ------------------------------------------------------------------ #
     def set_schema_repo(self, repo: SchemaRepo) -> None:
@@ -592,7 +673,11 @@ class SettingsWidget(QWidget):
         else:
             self._backup_combo.setCurrentText("自定义…")
 
-        self._cb_sandbox.setChecked(self._settings.sandbox_mode)
+        self._cb_sandbox.blockSignals(True)
+        try:
+            self._cb_sandbox.setChecked(self._settings.sandbox_mode)
+        finally:
+            self._cb_sandbox.blockSignals(False)
         self._pending_backup_settings = {
             "backup_count": self._settings.backup_count,
             "scheduled_backup_enabled": bool(getattr(self._settings, "scheduled_backup_enabled", False)),
@@ -617,7 +702,7 @@ class SettingsWidget(QWidget):
         self._set_theme_cards(self._settings.theme)
 
         self._refresh_schema_info()
-        self._refresh_extension_files()
+        self._schedule_dictionary_refresh()
         self._refresh_managed_files()
 
         # 部署可用性；沙盒模式下禁止触发真实部署。
@@ -655,37 +740,123 @@ class SettingsWidget(QWidget):
         if base:
             self._open_path(base / filename)
 
+    def _open_dictionary_center(self, scope: str) -> None:
+        if self._dictionary_center_opener is not None:
+            self._dictionary_center_opener(scope)
+
     def _open_extension_file(self, key: str) -> None:
         path = self._extension_paths.get(key)
         if path:
             self._open_path(path)
 
-    def _refresh_extension_files(self) -> None:
+    def _schedule_dictionary_refresh(self) -> None:
         base = self._active_rime_dir()
-        specs = {
-            # Static English dictionaries and the English input schema.  Do not
-            # include cn_en user dictionaries here.
-            "english": ("melt_eng.dict.yaml", "melt_eng.schema.yaml", "en_dicts/en*.dict.yaml"),
-            # Per-layout Chinese-English user dictionaries actually referenced by
-            # the shipped schemas.  Scripts and source files are not dictionaries.
-            "mixed": ("en_dicts/cn_en*",),
-            "display": ("pinyin_display.ini",),
-        }
-        for key, patterns in specs.items():
-            files = []
-            if base:
-                for pattern in patterns:
-                    files.extend(path for path in base.glob(pattern) if path.is_file())
-            unique = sorted(set(files))
-            if not unique:
+        key = self._dictionary_signature(base)
+        if key == self._dictionary_refresh_key:
+            return
+        self._dictionary_refresh_key = key
+        self._dictionary_generation += 1
+        generation = self._dictionary_generation
+        self._dictionary_catalog_label.setText("正在后台读取当前方案词典…")
+        self._extension_catalog_label.setText("正在后台读取扩展词典…")
+        self._dictionary_catalog_button.setEnabled(False)
+        self._extension_catalog_button.setEnabled(False)
+        self._dictionary_poll.start()
+
+        def deliver(snapshot, error) -> None:
+            self._dictionary_results.put((
+                generation,
+                snapshot if error is None else None,
+                "" if error is None else str(error),
+            ))
+
+        if self._data_engine_client is not None:
+            self._data_engine_client.request_latest(
+                "dictionary_snapshot", {"rime_dir": str(base or "")}, deliver,
+            )
+            return
+
+        def work() -> None:
+            try:
+                snapshot = self._build_dictionary_snapshot(base)
+                self._dictionary_results.put((generation, snapshot, ""))
+            except Exception as exc:
+                self._dictionary_results.put((generation, None, str(exc)))
+
+        threading.Thread(
+            target=work, daemon=True, name="settings-dictionary-catalog",
+        ).start()
+
+    def _drain_dictionary_results(self) -> None:
+        latest = None
+        while True:
+            try:
+                latest = self._dictionary_results.get_nowait()
+            except queue.Empty:
+                break
+        if latest is None:
+            return
+        generation, snapshot, error = latest
+        if generation != self._dictionary_generation:
+            return
+        self._dictionary_poll.stop()
+        if snapshot is None:
+            message = f"词典信息读取失败：{error}"
+            self._dictionary_catalog_label.setText(message)
+            self._extension_catalog_label.setText(message)
+            return
+        self._apply_dictionary_snapshot(snapshot)
+
+    @staticmethod
+    def _dictionary_signature(base: Path | None) -> tuple:
+        return dictionary_catalog_signature(base)
+
+    @staticmethod
+    def _build_dictionary_snapshot(base: Path | None) -> dict:
+        return dictionary_catalog_snapshot(base)
+
+    def _apply_dictionary_snapshot(self, snapshot: dict) -> None:
+        schemes = tuple(snapshot["schemes"])
+        catalogs = snapshot["catalogs"]
+        enabled = bool(schemes and self._dictionary_center_opener is not None)
+        self._dictionary_catalog_button.setEnabled(enabled)
+        self._extension_catalog_button.setEnabled(enabled)
+        if not schemes:
+            message = "未识别当前启用方案；不会混合显示其他已安装词库。"
+            self._dictionary_catalog_label.setText(message)
+            self._extension_catalog_label.setText(message)
+        elif len(schemes) == 1:
+            scheme_id = schemes[0]
+            catalog = catalogs[scheme_id]
+            name = scheme_title(scheme_id)
+            self._dictionary_catalog_label.setText(
+                f"当前方案：{name} · {catalog['total']} 个词典文件或入口"
+            )
+            self._extension_catalog_label.setText(
+                f"当前方案：{name} · {catalog['extensions']} 个扩展/个人/学习词典"
+            )
+        else:
+            names = "、".join(scheme_title(item) for item in schemes)
+            self._dictionary_catalog_label.setText(
+                f"已启用多个方案：{names}；打开后单独选择，绝不混合。"
+            )
+            self._extension_catalog_label.setText(
+                "已启用多个方案；打开后按方案查看扩展词典。"
+            )
+
+        for key, paths in snapshot["extensions"].items():
+            if not paths:
                 self._extension_paths.pop(key, None)
                 self._extension_labels[key].setText("未找到")
                 self._extension_open[key].setEnabled(False)
                 continue
-            self._extension_paths[key] = unique[0]
+            first_path = Path(paths[0])
+            self._extension_paths[key] = first_path
             self._extension_open[key].setEnabled(True)
-            suffix = f" 等 {len(unique)} 个文件" if len(unique) > 1 else ""
-            self._extension_labels[key].setText(f"已检测 · 只读{suffix}\n{unique[0]}")
+            suffix = f" 等 {len(paths)} 个文件" if len(paths) > 1 else ""
+            self._extension_labels[key].setText(
+                f"已检测 · 只读{suffix}\n{first_path}"
+            )
 
     def _active_rime_dir(self) -> Path | None:
         if not self._settings.rime_dir:

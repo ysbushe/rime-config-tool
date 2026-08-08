@@ -20,12 +20,24 @@ from src.service.hotkey_manager import HotkeyManager
 from src.service.library_tools import MetadataStore
 from src.service.pinyin_service import PinyinService
 from src.service.sandbox_service import SandboxService
-from src.service.system_dictionary_index import SystemDictionaryIndex
+from src.service.data_engine_service import DataEngineClient
+from src.service.dictionary_catalog import DictionaryCatalogService
+from src.service.vnext_dictionary_index import VNextDictionaryIndex
+from src.service.file_transaction import TransactionalFileWriter
 from src.service.rime_preview_service import RimePreviewService
 from src.settings import Settings
+from src.config.paths import settings_path
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _active_schema_path(rime_dir: str) -> str:
+    """Resolve the schema file that the effective enabled list selects."""
+    if not rime_dir:
+        return ""
+    schema_id = DictionaryCatalogService(rime_dir).preferred_scheme()
+    return f"{rime_dir}/{schema_id}.schema.yaml" if schema_id else ""
 
 
 @dataclass
@@ -44,7 +56,9 @@ class AppContext:
     autostart: Autostart
     cache_service: CacheService
     sandbox_service: SandboxService
-    system_dictionary_index: SystemDictionaryIndex
+    system_dictionary_index: VNextDictionaryIndex
+    data_engine_client: DataEngineClient
+    file_transaction_writer: TransactionalFileWriter
     rime_preview_service: RimePreviewService
     metadata_store: MetadataStore
 
@@ -64,14 +78,23 @@ class AppContext:
         deploy = DeployService(settings)
         autostart = Autostart()
         hotkey = HotkeyManager()
-        system_dictionary_index = SystemDictionaryIndex(rime_dir)
+        data_engine_client = DataEngineClient(timeout_seconds=15)
+        file_transaction_writer = TransactionalFileWriter(
+            settings_path().parent / "transactions"
+        )
+        recovered = file_transaction_writer.recover_pending()
+        if recovered:
+            logger.warning("已恢复 %d 个未完成的文件事务。", len(recovered))
+        system_dictionary_index = VNextDictionaryIndex(
+            rime_dir, data_engine_client, settings_path().parent / "indexes",
+        )
         rime_preview = RimePreviewService(rime_dir, deploy.deployer_path)
         metadata_store = MetadataStore(rime_dir)
 
         # 目录有效 → 指向真实文件；否则给空仓储（UI 提示设置目录）
         if rime_dir:
             phrase_repo = PhraseRepo(f"{rime_dir}/custom_phrase.txt", cache=cache)
-            schema_repo = SchemaRepo(f"{rime_dir}/rime_frost.schema.yaml", cache=cache)
+            schema_repo = SchemaRepo(_active_schema_path(rime_dir), cache=cache)
             symbols_repo = SymbolsRepo(f"{rime_dir}/symbols_v.yaml", cache=cache)
             group_service = GroupService(rime_dir)
         else:
@@ -95,6 +118,8 @@ class AppContext:
             cache_service=cache,
             sandbox_service=sandbox,
             system_dictionary_index=system_dictionary_index,
+            data_engine_client=data_engine_client,
+            file_transaction_writer=file_transaction_writer,
             rime_preview_service=rime_preview,
             metadata_store=metadata_store,
         )
@@ -108,7 +133,7 @@ class AppContext:
         self.backup_service.auto_cleanup = self.settings.backup_auto_cleanup
         self.backup_service.backup_dir = self.settings.backup_dir
         self.phrase_repo.__init__(f"{rime_dir}/custom_phrase.txt", cache=cache)
-        self.schema_repo.__init__(f"{rime_dir}/rime_frost.schema.yaml", cache=cache)
+        self.schema_repo.__init__(_active_schema_path(rime_dir), cache=cache)
         self.symbols_repo.__init__(f"{rime_dir}/symbols_v.yaml", cache=cache)
         self.group_service.__init__(rime_dir)
         self.system_dictionary_index.reset(rime_dir)

@@ -193,7 +193,9 @@ class WanxiangImportDialog(QDialog):
         warning_entries = self._warning_entry_count(plan)
         self._source_value.setText(str(plan.source_count))
         self._import_value.setText(str(plan.import_count))
-        self._duplicate_value.setText(str(plan.skipped_exact))
+        self._duplicate_value.setText(str(
+            plan.skipped_exact + plan.skipped_different
+        ))
         self._warning_value.setText(str(warning_entries))
         self._technical.setPlainText(self._format_technical(plan))
 
@@ -204,15 +206,35 @@ class WanxiangImportDialog(QDialog):
             self._set_notice("检查完成；当前处于沙盒模式。", "warning")
             self._set_status("沙盒模式只能查看结果，不能修改真实词库。", "warning")
         elif plan.import_count == 0:
-            self._set_notice("万象词库已经包含这些内容，无需重复导入。", "info")
+            if plan.skipped_different:
+                self._set_notice(
+                    f"没有新词条；其中 {plan.skipped_different} 条排序值或格式不同，"
+                    "已保留万象词库中的现有内容。",
+                    "info",
+                )
+            else:
+                self._set_notice("万象词库已经包含这些内容，无需重复导入。", "info")
             self._set_status("没有需要写入的新词条。", "neutral")
         elif plan.warnings:
-            self._set_notice(self._friendly_warnings(plan), "warning")
+            warning_text = self._friendly_warnings(plan)
+            if plan.skipped_different:
+                warning_text += (
+                    f"\n另有 {plan.skipped_different} 条已存在但排序值或格式不同；"
+                    "本次保留万象词库中的现有内容。"
+                )
+            self._set_notice(warning_text, "warning")
             self._warning_confirm.setText(
                 f"我知道这 {warning_entries} 条需要注意的内容会保持原样复制"
             )
             self._warning_confirm.setVisible(True)
             self._set_status("请确认上面的提示，然后即可开始导入。", "warning")
+        elif plan.skipped_different:
+            self._set_notice(
+                f"检查完成；{plan.skipped_different} 条已存在内容的排序值或格式不同，"
+                "本次保留万象词库中的现有内容。",
+                "info",
+            )
+            self._set_status("可以开始导入新的词条。白霜词库不会被修改。", "success")
         else:
             self._set_notice("检查完成，没有发现需要人工确认的问题。", "success")
             self._set_status("可以开始导入。白霜词库不会被修改。", "success")
@@ -286,6 +308,7 @@ class WanxiangImportDialog(QDialog):
             f"来源条目：{plan.source_count}",
             f"计划新增：{plan.import_count}",
             f"完全重复：{plan.skipped_exact}",
+            f"同词同码但内容不同：{plan.skipped_different}",
         ]
         if counts:
             lines.append("风险分类：" + "，".join(
@@ -372,8 +395,13 @@ class WanxiangImportDialog(QDialog):
             assert isinstance(result, ImportResult)
             message = (
                 f"导入完成：新增 {result.imported} 条，已存在并跳过 "
-                f"{result.skipped_exact} 条。"
+                f"{result.skipped_exact + result.skipped_different} 条。"
             )
+            if result.skipped_different:
+                message += (
+                    f" 其中 {result.skipped_different} 条排序值或格式不同，"
+                    "已保留万象原有内容。"
+                )
             self._set_notice("导入完成，万象拼音已经重新部署并验证成功。", "success")
             self._set_status(message, "success")
             self._technical.appendPlainText(f"\n备份位置：{result.snapshot_dir}")

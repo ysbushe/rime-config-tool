@@ -85,3 +85,49 @@ def test_conflict_log_does_not_include_phrase_content(phrase_repo: PhraseRepo, c
 
     assert phrase.text not in caplog.text
     assert phrase.code not in caplog.text
+
+
+def test_adjust_rank_supports_top_up_and_down(tmp_path) -> None:
+    path = tmp_path / "custom_phrase.txt"
+    path.write_text(
+        "甲\ttongma\t9\n乙\ttongma\t5\n丙\ttongma\t1\n其他\tqita\t99\n",
+        encoding="utf-8",
+    )
+    repo = PhraseRepo(str(path))
+
+    assert repo.adjust_rank("丙", "tongma", "up") is True
+    assert [item.text for item in repo.candidates_for_code("tongma")] == [
+        "甲", "丙", "乙",
+    ]
+
+    assert repo.adjust_rank("丙", "tongma", "top") is True
+    assert [item.text for item in repo.candidates_for_code("tongma")] == [
+        "丙", "甲", "乙",
+    ]
+
+    assert repo.adjust_rank("丙", "tongma", "down") is True
+    assert [item.text for item in repo.candidates_for_code("tongma")] == [
+        "甲", "丙", "乙",
+    ]
+
+
+def test_adjust_rank_uses_file_order_when_weights_are_equal(tmp_path) -> None:
+    path = tmp_path / "custom_phrase.txt"
+    path.write_text("甲\ttongma\t5\n乙\ttongma\t5\n", encoding="utf-8")
+    repo = PhraseRepo(str(path))
+
+    assert repo.adjust_rank("乙", "tongma", "up") is True
+    assert [item.text for item in repo.candidates_for_code("tongma")] == ["乙", "甲"]
+
+
+def test_rank_actions_can_tune_against_read_only_system_candidates(tmp_path) -> None:
+    path = tmp_path / "custom_phrase.txt"
+    path.write_text("个人词\tgerenci\t5\n", encoding="utf-8")
+    repo = PhraseRepo(str(path))
+
+    assert repo.adjust_rank("个人词", "gerenci", "up") is True
+    assert repo.find("个人词", "gerenci").weight == 6
+    assert repo.adjust_rank("个人词", "gerenci", "top") is True
+    assert repo.find("个人词", "gerenci").weight == 99
+    assert repo.adjust_rank("个人词", "gerenci", "down") is True
+    assert repo.find("个人词", "gerenci").weight == 98

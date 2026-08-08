@@ -46,6 +46,9 @@ def main() -> int:
     if "--rime-preview-host" in sys.argv or os.environ.get("RIME_CONFIG_PREVIEW_HOST") == "1":
         from src.service.rime_preview_host import run
         return run()
+    if "--data-engine-host" in sys.argv:
+        from src.service.data_engine_host import run
+        return run()
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
 
@@ -97,6 +100,7 @@ def main() -> int:
         return app.exec()
     finally:
         wake_timer.stop()
+        context.data_engine_client.close()
         instance_guard.release()
 
 

@@ -41,6 +41,16 @@ def raw_code(code: str) -> str:
     return normalize_display_code(code).replace(DISPLAY_SEPARATOR, "")
 
 
+def contains_han(value: str) -> bool:
+    """Return whether text contains a CJK unified or compatibility ideograph."""
+    return any(
+        "\u3400" <= char <= "\u4dbf"
+        or "\u4e00" <= char <= "\u9fff"
+        or "\uf900" <= char <= "\ufaff"
+        for char in value
+    )
+
+
 def build_suggestions(text: str, pinyin: PinyinService) -> list[EncodingSuggestion]:
     english = _english_suggestions(text)
     if english:
@@ -50,13 +60,7 @@ def build_suggestions(text: str, pinyin: PinyinService) -> list[EncodingSuggesti
         return []
     values = [EncodingSuggestion("全拼", DISPLAY_SEPARATOR.join(units))]
     if len(units) > 1:
-        values.extend([
-            EncodingSuggestion("严格简拼", DISPLAY_SEPARATOR.join(u[:1] for u in units if u)),
-            EncodingSuggestion("紧凑简拼", DISPLAY_SEPARATOR.join(
-                u if i == 0 else u[:1] for i, u in enumerate(units))),
-            EncodingSuggestion("混剪简拼", DISPLAY_SEPARATOR.join(
-                u[:1] if i == 0 else u for i, u in enumerate(units))),
-        ])
+        values.extend(build_short_code_suggestions(units))
     unique: list[EncodingSuggestion] = []
     seen: set[str] = set()
     for suggestion in values:
@@ -125,3 +129,27 @@ def _english_suggestions(text: str) -> list[EncodingSuggestion]:
             seen.add(option.display_code)
             unique.append(option)
     return unique
+
+
+def build_short_code_suggestions(units: list[str]) -> list[EncodingSuggestion]:
+    """Build the exact shorthand forms supported by the editor and search index."""
+    clean = [unit.strip().lower() for unit in units if unit.strip()]
+    if len(clean) < 2:
+        return []
+    return [
+        EncodingSuggestion(
+            "严格简拼", DISPLAY_SEPARATOR.join(unit[:1] for unit in clean)
+        ),
+        EncodingSuggestion(
+            "紧凑简拼", DISPLAY_SEPARATOR.join(
+                unit if index == 0 else unit[:1]
+                for index, unit in enumerate(clean)
+            ),
+        ),
+        EncodingSuggestion(
+            "混剪简拼", DISPLAY_SEPARATOR.join(
+                unit[:1] if index == 0 else unit
+                for index, unit in enumerate(clean)
+            ),
+        ),
+    ]

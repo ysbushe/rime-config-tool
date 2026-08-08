@@ -99,9 +99,32 @@ def test_plan_is_one_way_and_preserves_target_order(tmp_path: Path):
 
     assert plan.source_count == 2
     assert plan.import_count == 1
-    assert plan.skipped_exact == 1
+    assert plan.skipped_exact == 0
+    assert plan.skipped_different == 1
     assert rendered.index("已有\tyiyou\t8") < rendered.index("测试\tceshi\t101")
     assert _sha(rime / "custom_phrase.txt") == source_hash
+
+
+def test_plan_distinguishes_exact_duplicates_from_existing_differences(
+        tmp_path: Path) -> None:
+    rime = _rime_dir(
+        tmp_path,
+        "完全相同\txiangtong\t8\n排序变化\tpaixu\t3\n新增\txinzeng\t5\n".encode("utf-8"),
+    )
+    (rime / TARGET_FILENAME).write_text(
+        "完全相同\txiangtong\t8\n排序变化\tpaixu\t9\n", encoding="utf-8"
+    )
+    service = WanxiangImportService(
+        rime, tmp_path / "backups", lambda: (True, "ok")
+    )
+
+    plan = service.plan()
+
+    assert plan.import_count == 1
+    assert plan.skipped_exact == 1
+    assert plan.skipped_different == 1
+    assert "排序变化\tpaixu\t9" in plan.target_bytes.decode("utf-8")
+    assert "排序变化\tpaixu\t3" not in plan.target_bytes.decode("utf-8")
 
 
 def test_existing_non_default_wanxiang_dictionary_blocks_overwrite(tmp_path: Path):
@@ -207,6 +230,31 @@ def test_import_dialog_reports_counts_without_phrase_text(qapp, tmp_path: Path):
     assert dialog._warning_confirm.isVisibleTo(dialog)
     assert dialog._execute_button.isEnabled()
     dialog._warning_confirm.setChecked(True)
+    assert dialog._execute_button.isEnabled()
+    dialog.close()
+
+
+def test_import_dialog_explains_existing_weight_difference(
+        qapp, tmp_path: Path) -> None:
+    from src.ui.wanxiang_import_dialog import WanxiangImportDialog
+
+    rime = _rime_dir(
+        tmp_path,
+        "已有差异\tyouyichayi\t3\n新增\txinzeng\t5\n".encode("utf-8"),
+    )
+    (rime / TARGET_FILENAME).write_text(
+        "已有差异\tyouyichayi\t9\n", encoding="utf-8"
+    )
+    service = WanxiangImportService(
+        rime, tmp_path / "backups", lambda: (True, "ok")
+    )
+    dialog = WanxiangImportDialog(service)
+
+    dialog.scan()
+
+    assert dialog._duplicate_value.text() == "1"
+    assert "保留万象词库中的现有内容" in dialog._notice.text()
+    assert "同词同码但内容不同：1" in dialog._technical.toPlainText()
     assert dialog._execute_button.isEnabled()
     dialog.close()
 

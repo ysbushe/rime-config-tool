@@ -14,10 +14,39 @@ from typing import Optional
 from PySide6.QtCore import QObject, Signal
 
 from src.encoding.code_suggestions import raw_code
+from src.config.paths import user_config_dir
 from src.service.rime_profiles import safe_preview_schema
+from src.service.rime_preview_workspace import PreviewWorkspace
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def _configured_page_size(rime_dir: str, default: int = 5) -> int:
+    """Read Rime's deployed menu size without requiring a YAML dependency."""
+    root = Path(rime_dir) if rime_dir else None
+    if root is None:
+        return default
+    for path in (root / "build/default.yaml", root / "default.yaml"):
+        try:
+            lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            continue
+        in_menu = False
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if not line[:1].isspace():
+                in_menu = stripped == "menu:"
+                continue
+            if in_menu and stripped.startswith("page_size:"):
+                raw_value = stripped.split(":", 1)[1].split("#", 1)[0].strip()
+                try:
+                    return max(1, min(10, int(raw_value)))
+                except ValueError:
+                    break
+    return default
 
 
 class PreviewEvents(QObject):
@@ -45,8 +74,13 @@ class RimePreviewService:
         self._lock = threading.RLock()
         self.events = PreviewEvents()
         self._rime_dir = rime_dir
+        self._page_size = _configured_page_size(rime_dir)
         self._deployer_path = deployer_path
         self._schema_id, self._schema_message = safe_preview_schema(rime_dir)
+        self._workspace = PreviewWorkspace(user_config_dir() / "preview")
+        self._preview_dir = ""
+        self._prebuilt_data_dir = ""
+        self._workspace_message = ""
         self._process: subprocess.Popen | None = None
         self._snapshot = PreviewSnapshot("idle")
         self._request_id = 0
@@ -91,6 +125,14 @@ class RimePreviewService:
     def schema_id(self) -> str | None:
         return self._schema_id
 
+    @property
+    def availability_message(self) -> str:
+        return self._schema_message
+
+    @property
+    def page_size(self) -> int:
+        return self._page_size
+
 
     def reset(self, rime_dir: str, deployer_path: str = "") -> None:
         self.close()
@@ -98,9 +140,13 @@ class RimePreviewService:
             self._request_id += 1
             self._queued_code = ""
             self._rime_dir = rime_dir
+            self._page_size = _configured_page_size(rime_dir)
             self._deployer_path = deployer_path
             self._snapshot = PreviewSnapshot("idle")
             self._schema_id, self._schema_message = safe_preview_schema(rime_dir)
+            self._preview_dir = ""
+            self._prebuilt_data_dir = ""
+            self._workspace_message = ""
         self.events.changed.emit()
 
     def mark_waiting_for_deploy(self) -> None:
@@ -135,8 +181,9 @@ class RimePreviewService:
         try:
             process = self._ensure_process()
             payload = {
-                "command": "warmup", "rime_dir": self._rime_dir,
+                "command": "warmup", "rime_dir": self._preview_dir,
                 "rime_dll": str(self._rime_dll()), "schema_id": self._schema_id,
+                "prebuilt_data_dir": self._prebuilt_data_dir,
             }
             assert process.stdin and process.stdout
             process.stdin.write(json.dumps(payload, ensure_ascii=True) + "\n")
@@ -207,8 +254,9 @@ class RimePreviewService:
             try:
                 process = self._ensure_process()
                 payload = {
-                    "command": "preview", "code": code, "rime_dir": self._rime_dir,
+                    "command": "preview", "code": code, "rime_dir": self._preview_dir,
                     "rime_dll": str(self._rime_dll()), "schema_id": self._schema_id,
+                    "prebuilt_data_dir": self._prebuilt_data_dir,
                 }
                 assert process.stdin and process.stdout
                 process.stdin.write(json.dumps(payload, ensure_ascii=True) + "\n")
@@ -218,7 +266,9 @@ class RimePreviewService:
                 if not result.get("ok"):
                     raise RuntimeError(result.get("error", "候选预览不可用"))
                 candidates = tuple(PreviewCandidate(**item) for item in result.get("candidates", []))
-                snapshot = PreviewSnapshot("ready", code, candidates)
+                snapshot = PreviewSnapshot(
+                    "ready", code, candidates, self._workspace_message,
+                )
                 logger.info(
                     "Rime 候选预览查询完成 code_length=%d elapsed_ms=%.1f",
                     len(code), (time.perf_counter() - started) * 1000,
@@ -248,6 +298,18 @@ class RimePreviewService:
             dll = self._rime_dll()
             if not self._rime_dir or not dll.is_file():
                 raise RuntimeError("未找到可用的 Rime 预览引擎。")
+            if not self._schema_id:
+                raise RuntimeError(self._schema_message or "未识别可预览方案。")
+            report = self._workspace.prepare(self._rime_dir, self._schema_id)
+            self._preview_dir = str(report.path)
+            self._prebuilt_data_dir = str(Path(self._rime_dir) / "build")
+            if report.skipped_userdbs:
+                self._workspace_message = (
+                    "部分学习库正在被 Rime 占用，本次预览未包含："
+                    + "、".join(report.skipped_userdbs)
+                )
+            else:
+                self._workspace_message = ""
             if getattr(sys, "frozen", False):
                 args = [sys.executable, "--rime-preview-host"]
             else:

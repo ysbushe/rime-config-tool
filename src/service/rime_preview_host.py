@@ -52,10 +52,14 @@ class _Context(c.Structure):
 
 
 class PreviewEngine:
-    def __init__(self, rime_dir: str, rime_dll: str, schema_id: str) -> None:
+    def __init__(
+        self, rime_dir: str, rime_dll: str, schema_id: str,
+        prebuilt_data_dir: str = "",
+    ) -> None:
         self._root = Path(rime_dll).parent
         self._rime_dir = Path(rime_dir)
         self._schema_id = schema_id
+        self._prebuilt_data_dir = Path(prebuilt_data_dir) if prebuilt_data_dir else None
         self._session = 0
         self._lib = None
 
@@ -91,6 +95,11 @@ class PreviewEngine:
         traits.app_name = b"rime.config_preview"
         traits.min_log_level = 1
         traits.log_dir = b""
+        if self._prebuilt_data_dir is not None and self._prebuilt_data_dir.is_dir():
+            traits.prebuilt_data_dir = str(self._prebuilt_data_dir).encode()
+        staging = self._rime_dir / "build"
+        staging.mkdir(parents=True, exist_ok=True)
+        traits.staging_dir = str(staging).encode()
         lib.RimeSetup(c.byref(traits))
         lib.RimeInitialize(c.byref(traits))
         self._session = int(lib.RimeCreateSession())
@@ -110,7 +119,8 @@ class PreviewEngine:
             return []
         try:
             result = []
-            for index in range(min(5, int(context.menu.num_candidates))):
+            page_size = max(1, int(context.menu.page_size))
+            for index in range(min(page_size, int(context.menu.num_candidates))):
                 candidate = context.menu.candidates[index]
                 result.append({
                     "text": (candidate.text or b"").decode("utf-8", "replace"),
@@ -156,7 +166,11 @@ def run() -> int:
                 if request.get("command") == "shutdown":
                     return 0
                 if engine is None:
-                    engine = PreviewEngine(request["rime_dir"], request["rime_dll"], request.get("schema_id", "rime_frost"))
+                    engine = PreviewEngine(
+                        request["rime_dir"], request["rime_dll"],
+                        request.get("schema_id", "rime_frost"),
+                        request.get("prebuilt_data_dir", ""),
+                    )
                 if request.get("command") == "warmup":
                     engine.start()
                     response = {"ok": True, "candidates": [], "warmed": True}

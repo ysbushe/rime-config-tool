@@ -83,10 +83,13 @@ class PinyinDisplayStore:
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_utf8(self.path, self.serialized_text())
+
+    def serialized_text(self) -> str:
         parser = configparser.ConfigParser(interpolation=None)
         for key, (text, code, display) in sorted(self._values.items()):
             parser[f"entry:{key}"] = {"text": text, "code": code, "display": display}
         from io import StringIO
         buffer = StringIO()
         parser.write(buffer)
-        write_text_utf8(self.path, buffer.getvalue().replace("\r\n", "\n"))
+        return buffer.getvalue().replace("\r\n", "\n")

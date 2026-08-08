@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from src.service.rime_preview_service import RimePreviewService
+from src.app_context import _active_schema_path
 from src.service.rime_profiles import (
     active_schema_ids,
     detect_scheme_profiles,
@@ -31,19 +32,15 @@ def test_detects_installed_and_active_frost_and_wanxiang(tmp_path: Path):
     assert profiles["wanxiang"].installed and profiles["wanxiang"].active
 
 
-def test_wanxiang_preview_is_explicitly_disabled_without_isolated_user_dir(
-        qapp, tmp_path: Path):
+def test_wanxiang_preview_uses_isolated_workspace(qapp, tmp_path: Path):
     rime = tmp_path / "Rime"
     rime.mkdir()
     (rime / "wanxiang.schema.yaml").write_text("schema: {}", encoding="utf-8")
     _write_default(rime, ["wanxiang"], "\r\n")
 
     service = RimePreviewService(str(rime))
-    service.request("ceshi")
-
-    assert service.schema_id is None
-    assert service.snapshot.state == "unavailable"
-    assert "万象" in service.snapshot.message
+    assert service.schema_id == "wanxiang"
+    assert "独立用户目录" in service.availability_message
     assert service._process is None
 
 
@@ -87,7 +84,7 @@ def test_preview_reset_rechecks_active_scheme(tmp_path: Path):
 
     service.reset(str(wanxiang))
 
-    assert service.schema_id is None
+    assert service.schema_id == "wanxiang"
 
 
 def test_scheme_display_uses_enabled_single_scheme_not_stale_previous(tmp_path: Path):
@@ -133,4 +130,15 @@ def test_scheme_display_does_not_claim_unknown_scheme_is_compatible(tmp_path: Pa
     assert state.summary == "当前方案：未识别（third_party）"
     assert "尚未通过" in state.detail
     assert state.role == "warning"
+
+
+def test_app_context_schema_path_follows_enabled_scheme_not_installed_frost(
+        tmp_path: Path):
+    rime = tmp_path / "Rime"
+    rime.mkdir()
+    (rime / "rime_frost.schema.yaml").write_text("schema: {}", encoding="utf-8")
+    (rime / "wanxiang.schema.yaml").write_text("schema: {}", encoding="utf-8")
+    _write_default(rime, ["wanxiang"])
+
+    assert Path(_active_schema_path(str(rime))).name == "wanxiang.schema.yaml"
 
