@@ -52,6 +52,11 @@ def app_log_path() -> Path:
     return user_config_dir() / "logs" / "app.log"
 
 
+def input_diagnostics_log_path() -> Path:
+    """隐私安全的输入诊断事件日志路径。"""
+    return user_config_dir() / "diagnostics" / "input-events.jsonl"
+
+
 def group_sidecar_path(rime_dir: Union[str, Path], phrase_filename: str = PHRASE_FILENAME) -> Path:
     """分组 sidecar 文件路径，例如 <rime_dir>/custom_phrase.txt.groups.json。"""
     return Path(rime_dir) / f"{phrase_filename}{GROUP_SIDECAR_SUFFIX}"

@@ -193,6 +193,53 @@ def test_sandbox_disables_tray_deploy(qapp, app_context) -> None:
     assert "沙盒" not in mw._tray.action_deploy.text()
 
 
+def test_rime_directory_change_is_reverted_when_staged_edits_are_kept(
+        qapp, app_context, monkeypatch, tmp_path) -> None:
+    from src.ui.main_window import MainWindow
+
+    app_context.settings.auto_group_done = True
+    window = MainWindow(app_context)
+    original = app_context.settings.rime_dir
+    replacement = str(tmp_path / "other-rime")
+    app_context.settings.rime_dir = replacement
+    monkeypatch.setattr(
+        window._phrase_manager, "confirm_discard_changes", lambda _action: False,
+    )
+    rebuilds = []
+    monkeypatch.setattr(app_context, "rebuild_repos", lambda: rebuilds.append(True))
+
+    window._on_rime_dir_changed(replacement)
+
+    assert app_context.settings.rime_dir == original
+    assert rebuilds == []
+    window._tray.hide()
+
+
+def test_main_window_title_and_status_show_index_build_progress(
+        qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow
+
+    app_context.settings.auto_group_done = True
+    index = app_context.system_dictionary_index
+    index._state = "building"
+    index._scheme_id = "wanxiang"
+    index._progress = {
+        "phase": "building", "files_completed": 2, "files_total": 10,
+        "current_file": "base.dict.yaml",
+        "processed_bytes": 40, "total_bytes": 100,
+    }
+    window = MainWindow(app_context)
+
+    window._refresh_index_status()
+
+    assert "正在构建万象索引 38%" in window.windowTitle()
+    assert window._index_progress.value() == 38
+    assert "base.dict.yaml" in window._index_status_label.text()
+    assert window.statusBar().isHidden() is False
+    window._index_status_timer.stop()
+    window._tray.hide()
+
+
 def test_result_toast_separates_phrase_and_codes(qapp) -> None:
     from src.ui.toast_notification import ToastNotification
 
@@ -212,3 +259,33 @@ def test_release_ico_is_loadable() -> None:
     assert icon_path.is_file()
     assert not icon.isNull()
     assert not icon.pixmap(16, 16).isNull()
+
+def test_settings_launches_input_diagnostics_only_on_click(qapp) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    calls = []
+    widget = SettingsWidget(
+        _FakeSettings(), _FakeAutostart(), _FakeDeploy(),
+        diagnostics_launcher=lambda: (calls.append("started") or True, "已按需启动"),
+    )
+
+    assert calls == []
+    assert widget._lbl_diagnostics_status.isHidden()
+    widget._btn_input_diagnostics.click()
+    assert calls == ["started"]
+    assert widget._lbl_diagnostics_status.text() == "已按需启动"
+
+def test_settings_updates_status_when_diagnostics_closes(qapp) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    widget = SettingsWidget(
+        _FakeSettings(), _FakeAutostart(), _FakeDeploy(),
+        diagnostics_launcher=lambda: (True, "输入诊断程序已启动。", 123),
+        diagnostics_process_checker=lambda _pid: False,
+    )
+
+    widget._btn_input_diagnostics.click()
+    assert widget._diagnostics_poll.isActive()
+    widget._poll_input_diagnostics()
+    assert not widget._diagnostics_poll.isActive()
+    assert widget._lbl_diagnostics_status.text() == "输入诊断已停止。"

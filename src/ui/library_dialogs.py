@@ -3,14 +3,19 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QButtonGroup, QDialog, QDialogButtonBox, QHBoxLayout, QHeaderView, QLabel,
-    QMenu, QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QTableWidget,
-    QTableWidgetItem, QVBoxLayout,
+    QAbstractItemView, QButtonGroup, QDialog, QDialogButtonBox, QHBoxLayout,
+    QHeaderView, QLabel, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
+    QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
 )
 
+from src.encoding.code_suggestions import raw_code
 from src.repo.phrase_repo import Phrase
 from src.ui.dialog_workbench import dialog_section
-from src.service.library_tools import DuplicateIndex, HealthIssue, export_text, parse_import_text
+from src.service.library_tools import (
+    DuplicateIndex, HealthIssue, exact_duplicate_groups, export_text,
+    parse_import_text,
+)
+from src.ui.phrase_table import PhraseTableView
 
 
 class DuplicateEditDialog(QDialog):
@@ -258,6 +263,181 @@ class ImportExportDialog(QDialog):
         self.accept()
 
 
+class PhraseSearchResultDialog(QDialog):
+    """Independent result window that reuses the library table actions."""
+
+    def __init__(self, title: str, phrase_provider, edit_callback,
+                 delete_callback, group_service=None, parent=None,
+                 display_code=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("AppDialog")
+        self.setWindowTitle(title)
+        self.resize(820, 460)
+        self._phrase_provider = phrase_provider
+        self._edit_callback = edit_callback
+        self._delete_callback = delete_callback
+        self._group_service = group_service
+        self._display_code = display_code or (lambda phrase: phrase.code)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+        intro, intro_layout = dialog_section(self, "搜索结果")
+        self._summary = QLabel(intro)
+        self._summary.setWordWrap(True)
+        intro_layout.addWidget(self._summary)
+        layout.addWidget(intro)
+
+        self._table = PhraseTableView(group_service=group_service, parent=self)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.entryEditRequested.connect(self._edit)
+        self._table.deleteRequested.connect(self._delete)
+        layout.addWidget(self._table, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.refresh()
+
+    def refresh(self) -> None:
+        phrases = list(self._phrase_provider())
+        group_of = (
+            lambda phrase: self._group_service.get_entry_group(
+                phrase.text, phrase.code
+            )
+        ) if self._group_service is not None else None
+        self._table.set_phrases(
+            phrases, group_of=group_of, code_display=self._display_code
+        )
+        self._summary.setText(
+            f"共找到 {len(phrases)} 条。双击文本或编码可编辑，"
+            "“删除”操作与词库管理界面一致。"
+        )
+
+    def _edit(self, phrase: Phrase) -> None:
+        self._edit_callback(phrase)
+        self.refresh()
+
+    def _delete(self, phrase: Phrase) -> None:
+        self._delete_callback(phrase)
+        self.refresh()
+
+
+class LibraryHealthDialog(QDialog):
+    """Read-only structured health results with entry navigation."""
+
+    def __init__(self, phrases: list[Phrase], issues: list[HealthIssue],
+                 view_callback, parent=None, display_code=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("AppDialog")
+        self.setWindowTitle("词库检查")
+        self.resize(920, 620)
+        self._phrases = list(phrases)
+        self._issues = list(issues)
+        self._view_callback = view_callback
+        self._display_code = display_code or (lambda phrase: phrase.code)
+        self._duplicate_keys: list[tuple[str, str]] = []
+        self._other_keys: list[tuple[str, str]] = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        summary, summary_layout = dialog_section(self, "检查概览")
+        self._summary = QLabel(summary)
+        self._summary.setWordWrap(True)
+        summary_layout.addWidget(self._summary)
+        layout.addWidget(summary)
+
+        duplicates, duplicates_layout = dialog_section(self, "完全重复条目")
+        self._duplicates = QTableWidget(0, 5, duplicates)
+        self._duplicates.setHorizontalHeaderLabels(
+            ["文本", "编码", "条数", "权重", "操作"]
+        )
+        self._duplicates.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._duplicates.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        dup_header = self._duplicates.horizontalHeader()
+        dup_header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        dup_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        for column in (2, 3, 4):
+            dup_header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self._duplicates.verticalHeader().setDefaultSectionSize(36)
+        self._duplicates.doubleClicked.connect(self._view_duplicate_row)
+        duplicates_layout.addWidget(self._duplicates)
+        layout.addWidget(duplicates, 1)
+
+        other, other_layout = dialog_section(self, "其他待处理问题")
+        self._other = QTableWidget(0, 5, other)
+        self._other.setHorizontalHeaderLabels(["类型", "说明", "文本", "编码", "操作"])
+        self._other.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        other_header = self._other.horizontalHeader()
+        other_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        other_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        other_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        other_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        other_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self._other.setMaximumHeight(180)
+        self._other.doubleClicked.connect(self._view_other_row)
+        other_layout.addWidget(self._other)
+        layout.addWidget(other)
+
+        actions = QHBoxLayout()
+        close = QPushButton("关闭", self)
+        close.clicked.connect(self.accept)
+        actions.addStretch(1)
+        actions.addWidget(close)
+        layout.addLayout(actions)
+        self.refresh()
+
+    def refresh(self) -> None:
+        groups = exact_duplicate_groups(self._phrases)
+        other_issues = [issue for issue in self._issues if issue.kind != "exact_duplicate"]
+        self._summary.setText(
+            f"共检查 {len(self._phrases)} 条；发现 {len(groups)} 组完全重复，"
+            f"其他问题 {len(other_issues)} 项。点击“查看”或双击一行打开独立搜索结果。"
+        )
+        self._duplicate_keys = [group.key for group in groups]
+        self._duplicates.setRowCount(len(groups))
+        for row, group in enumerate(groups):
+            display = self._display_code(group.entries[0]) or group.code
+            weights = "、".join(str(item.weight) for item in group.entries)
+            values = [
+                group.text or "（空）", display or "（空）",
+                str(len(group.entries)), weights,
+            ]
+            for column, value in enumerate(values):
+                self._duplicates.setItem(row, column, QTableWidgetItem(value))
+            button = QPushButton("查看", self._duplicates)
+            button.clicked.connect(
+                lambda _=False, key=group.key: self._view_callback(*key)
+            )
+            self._duplicates.setCellWidget(row, 4, button)
+            self._duplicates.setRowHeight(row, 36)
+        self._duplicates.setVisible(bool(groups))
+
+        self._other_keys = [(issue.text, raw_code(issue.code)) for issue in other_issues]
+        self._other.setRowCount(len(other_issues))
+        for row, issue in enumerate(other_issues):
+            for column, value in enumerate(
+                (issue.kind, issue.message, issue.text or "（空）", issue.code or "（空）")
+            ):
+                self._other.setItem(row, column, QTableWidgetItem(value))
+            key = self._other_keys[row]
+            button = QPushButton("查看", self._other)
+            button.clicked.connect(
+                lambda _=False, selected=key: self._view_callback(*selected)
+            )
+            self._other.setCellWidget(row, 4, button)
+        self._other.setVisible(bool(other_issues))
+
+    def _view_duplicate_row(self, index) -> None:
+        if 0 <= index.row() < len(self._duplicate_keys):
+            self._view_callback(*self._duplicate_keys[index.row()])
+
+    def _view_other_row(self, index) -> None:
+        if 0 <= index.row() < len(self._other_keys):
+            self._view_callback(*self._other_keys[index.row()])
+
 class MaintenanceDialog(QDialog):
     def __init__(self, title: str, lines: list[str], parent=None) -> None:
         super().__init__(parent)
@@ -274,7 +454,3 @@ class MaintenanceDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
-
-
-def issue_lines(issues: list[HealthIssue]) -> list[str]:
-    return [f"[{issue.kind}] {issue.message}  {issue.text} / {issue.code}" for issue in issues]

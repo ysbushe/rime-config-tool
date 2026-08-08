@@ -64,6 +64,8 @@ class QuickAddDialog(QDialog):
         self._create_group_callback = create_group
         self._recommended_weight: Optional[int] = None
         self._custom_weight: Optional[int] = None  # 选择自定义后的具体权重
+        self._weight_explicit = False
+        self._group_explicit = False
         self._prev_index = 0                        # 进入自定义前的下拉索引
         self._suppress = False                      # 防止程序化回退触发二次弹窗
         self._additional_codes: list[str] = []
@@ -71,6 +73,7 @@ class QuickAddDialog(QDialog):
         self._suggestion_generation = 0
         self._suggestion_results: queue.SimpleQueue = queue.SimpleQueue()
         self._pending_suggestion_generations: set[int] = set()
+        self._disposed = False
         self._build_ui()
         # 冲突区按需展开，窗口保留可缩放能力。
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
@@ -110,6 +113,8 @@ class QuickAddDialog(QDialog):
             self._text.setFocus()
 
     def _initialize_prefill(self) -> None:
+        if self._disposed:
+            return
         if not self._prefill_initialization_pending:
             return
         self._prefill_initialization_pending = False
@@ -118,6 +123,18 @@ class QuickAddDialog(QDialog):
         self._code.selectAll()
 
     # ------------------------------------------------------------------ #
+    def dispose(self) -> None:
+        """Stop asynchronous UI work before the modal dialog is deleted."""
+        if self._disposed:
+            return
+        self._disposed = True
+        self._suggestion_generation += 1
+        self._pending_suggestion_generations.clear()
+        for timer in (
+            self._timer, self._suggestion_result_timer, self._dictionary_timer,
+        ):
+            timer.stop()
+        self._preview_panel.dispose()
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -167,6 +184,7 @@ class QuickAddDialog(QDialog):
         self._weight_combo.addItem("自定义…", None)
         self._weight_combo.setCurrentIndex(0)  # 默认权重 1
         self._weight_combo.currentIndexChanged.connect(self._on_weight_mode_changed)
+        self._weight_combo.activated.connect(self._mark_weight_explicit)
 
         form.addRow("文本：", self._text)
         form.addRow("编码：", code_container)
@@ -176,6 +194,7 @@ class QuickAddDialog(QDialog):
         self._group.addItem("（无）", "")
         for g in self._groups:
             self._group.addItem(g, g)
+        self._group.activated.connect(self._mark_group_explicit)
         self._btn_new_group = QPushButton("新建分组")
         self._btn_new_group.setFixedWidth(82)
         self._btn_new_group.clicked.connect(self._create_group)
@@ -285,7 +304,7 @@ class QuickAddDialog(QDialog):
     def _prepare_suggestions(self, generation: int, text: str) -> None:
         """Prepare pinyin and duplicate state away from Qt's event loop."""
         try:
-            suggestions = build_suggestions(text, PinyinService())
+            suggestions = build_suggestions(text, self._pinyin)
             conflicts: dict[str, list] = {}
             if self._repo is not None:
                 for phrase in self._repo.all():
@@ -415,6 +434,7 @@ class QuickAddDialog(QDialog):
             self._groups.append(name)
             self._group.addItem(name, name)
         self._group.setCurrentIndex(self._group.findData(name))
+        self._group_explicit = True
         self._err.setText("")
 
     def _refresh_dictionary_hint(self) -> None:
@@ -468,12 +488,19 @@ class QuickAddDialog(QDialog):
         if self._recommended_weight is None:
             return
         self._custom_weight = self._recommended_weight
+        self._weight_explicit = True
         self._suppress = True
         self._weight_combo.setCurrentIndex(3)
         self._weight_combo.setItemText(3, f"自定义（{self._recommended_weight}）")
         self._prev_index = 3
         self._suppress = False
         self._refresh_dictionary_hint()
+
+    def _mark_weight_explicit(self, _index: int) -> None:
+        self._weight_explicit = True
+
+    def _mark_group_explicit(self, _index: int) -> None:
+        self._group_explicit = True
 
     def _insert_separator(self) -> None:
         value = self._code.text()
@@ -496,6 +523,7 @@ class QuickAddDialog(QDialog):
             val, ok = self._get_int_input(self._custom_weight or 1)
             if ok:
                 self._custom_weight = val
+                self._weight_explicit = True
                 self._suppress = True
                 self._weight_combo.setItemText(
                     self._weight_combo.currentIndex(), f"自定义（{val}）")
@@ -507,6 +535,7 @@ class QuickAddDialog(QDialog):
                 self._weight_combo.setCurrentIndex(prev)
                 self._suppress = False
         else:
+            self._weight_explicit = True
             self._prev_index = self._weight_combo.currentIndex()
 
     def _get_int_input(self, default: int) -> tuple[int, bool]:
@@ -562,7 +591,9 @@ class QuickAddDialog(QDialog):
             "code": raw_code(display_code),
             "display_code": display_code,
             "weight": self._weight_value(),
+            "weight_explicit": self._weight_explicit,
             "group": self._group.currentData() or "",
+            "group_explicit": self._group_explicit,
             "weight_updates": self._suggestion_panel.weight_updates(),
             "additional_codes": list(self._additional_codes),
         }

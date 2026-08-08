@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from src.utils.encoding import read_text_utf8, write_text_utf8
 from src.utils.logger import get_logger
@@ -94,13 +94,17 @@ class PhraseRepo:
         if not str(self.path) or self.path.is_dir():
             logger.warning("词库路径无效，跳过写入：%s", self.path)
             return
-        lines = list(self._header)
-        for entry in self._entries:
-            lines.append(entry.to_line())
-        write_text_utf8(self.path, "\n".join(lines) + "\n")
+        write_text_utf8(self.path, self.serialized_text())
+        self.mark_saved()
+        logger.info("已写回词库 %d 条：%s", len(self._entries), self.path)
+
+    def serialized_text(self) -> str:
+        lines = [*self._header, *(entry.to_line() for entry in self._entries)]
+        return "\n".join(lines) + "\n"
+
+    def mark_saved(self) -> None:
         if self._cache is not None:
             self._cache.update(self.path)
-        logger.info("已写回词库 %d 条：%s", len(self._entries), self.path)
 
     # ------------------------------------------------------------------ #
     # 查询
@@ -110,6 +114,25 @@ class PhraseRepo:
 
     def count(self) -> int:
         return len(self._entries)
+
+    def clone_in_memory(self) -> "PhraseRepo":
+        """Return a detached editable copy that never writes unless explicitly committed."""
+        clone = object.__new__(PhraseRepo)
+        clone.path = self.path
+        clone._header = list(self._header)
+        clone._entries = [
+            Phrase(entry.text, entry.code, entry.weight, entry.is_conflict)
+            for entry in self._entries
+        ]
+        clone._cache = None
+        return clone
+
+    def replace_all(self, entries: List[Phrase]) -> None:
+        """Replace the in-memory entries with detached copies; caller decides when to save."""
+        self._entries = [
+            Phrase(entry.text, entry.code, entry.weight, entry.is_conflict)
+            for entry in entries
+        ]
 
     def find(self, text: str, code: str) -> Optional[Phrase]:
         for e in self._entries:
@@ -141,6 +164,11 @@ class PhraseRepo:
             return list(self._entries)[::-1] if reverse else list(self._entries)
         return self.all()
 
+    def candidates_for_code(self, code: str) -> List[Phrase]:
+        """Return managed candidates in their effective weight/file order."""
+        candidates = [entry for entry in self._entries if entry.code == code]
+        return sorted(candidates, key=lambda entry: entry.weight, reverse=True)
+
     # ------------------------------------------------------------------ #
     # 变更
     # ------------------------------------------------------------------ #
@@ -156,8 +184,8 @@ class PhraseRepo:
             if weight is not None:
                 existing.weight = max(1, min(99, int(weight)))
             existing.is_conflict = True
-            logger.info("冲突：%s 已存在，保留单条并更新权重 → %d",
-                        existing.key, existing.weight)
+            logger.info("冲突：已有相同文本与编码，保留单条并更新权重 → %d",
+                        existing.weight)
             return existing, False, True
         w = max(1, min(99, int(weight if weight is not None else DEFAULT_WEIGHT)))
         phrase = Phrase(text=text, code=code, weight=w)
@@ -170,6 +198,49 @@ class PhraseRepo:
             e.weight = weight
             return True
         return False
+
+    def adjust_rank(
+            self, text: str, code: str,
+            action: Literal["top", "up", "down"]) -> bool:
+        """Move one managed candidate while changing the fewest entries possible."""
+        selected = self.find(text, code)
+        if selected is None:
+            return False
+        ordered = self.candidates_for_code(code)
+        try:
+            current_index = ordered.index(selected)
+        except ValueError:
+            return False
+        if action == "top":
+            target_index = 0
+        elif action == "up":
+            target_index = max(0, current_index - 1)
+        elif action == "down":
+            target_index = min(len(ordered) - 1, current_index + 1)
+        else:
+            raise ValueError(f"未知排序动作：{action}")
+        if target_index == current_index:
+            if action == "top" and selected.weight < 99:
+                selected.weight = 99
+                return True
+            if action == "up" and selected.weight < 99:
+                selected.weight += 1
+                return True
+            if action == "down" and selected.weight > 1:
+                selected.weight -= 1
+                return True
+            return False
+
+        target = ordered[target_index]
+        if selected.weight != target.weight:
+            selected.weight, target.weight = target.weight, selected.weight
+        else:
+            selected_position = self._entries.index(selected)
+            target_position = self._entries.index(target)
+            self._entries[selected_position], self._entries[target_position] = (
+                self._entries[target_position], self._entries[selected_position]
+            )
+        return True
 
     def delete(self, text: str, code: str) -> bool:
         for i, e in enumerate(self._entries):

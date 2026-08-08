@@ -50,6 +50,27 @@ def test_quick_add_weight_dropdown_defaults_and_custom(qapp, monkeypatch) -> Non
     assert dlg.get_values()["weight"] == 3
 
 
+def test_quick_add_reports_whether_primary_weight_was_explicit(qapp) -> None:
+    dlg = QuickAddDialog(prefill_text="测试")
+
+    assert dlg.get_values()["weight_explicit"] is False
+    dlg._weight_combo.setCurrentText("2")
+    assert dlg.get_values()["weight_explicit"] is True
+
+    dlg.close()
+
+
+def test_quick_add_reports_explicit_group_selection(qapp) -> None:
+    dlg = QuickAddDialog(prefill_text="测试", groups=["工作"])
+
+    assert dlg.get_values()["group_explicit"] is False
+    dlg._group.activated.emit(1)
+    dlg._group.setCurrentIndex(1)
+    assert dlg.get_values()["group_explicit"] is True
+
+    dlg.close()
+
+
 class _WidgetSettings:
     def __init__(self, sandbox_mode: bool = True) -> None:
         self.rime_dir = "C:/Users/test/AppData/Roaming/Rime"
@@ -100,11 +121,12 @@ def test_settings_uses_vertical_scroll_area(qapp) -> None:
     widget.show()
     qapp.processEvents()
 
-    assert widget._scroll.widgetResizable()
-    assert widget._scroll.horizontalScrollBarPolicy() == (
+    scroll = widget._sections.currentWidget()
+    assert scroll.widgetResizable()
+    assert scroll.horizontalScrollBarPolicy() == (
         Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     )
-    assert widget._scroll.verticalScrollBar().maximum() > 0
+    assert scroll.verticalScrollBar().maximum() > 0
 
 def test_sandbox_copies_group_sidecar(temp_rime_dir, tmp_path, monkeypatch) -> None:
     sidecar = temp_rime_dir / "custom_phrase.txt.groups.json"

@@ -266,11 +266,6 @@ class KeyboardBackend:
         """Ctrl+C 兜底：通过 keyboard 库模拟按键复制。"""
         try:
             if self._kb is not None:
-                for key in ("alt", "shift", "windows"):
-                    try:
-                        self._kb.release(key)
-                    except Exception:
-                        pass
                 self._kb.send("ctrl+c")
         except Exception:
             pass

@@ -307,9 +307,9 @@ class Win32HotkeyBackend:
             #    普通程序偏向 Ctrl+C；终端类窗口优先 Ctrl+Shift+C，避免 Ctrl+C 中断。
             attempts = self._copy_attempts_for(_hwnd_class_name(fg_hwnd), _hwnd_class_name(focus_hwnd))
             attempt_index = 0
-            # SendInput 降级和应用自身复制都可能占去数百毫秒；保留足够窗口。
-            deadline = time.monotonic() + 0.75
-            next_attempt_at = time.monotonic() + 0.05
+            # 缩短空取词等待，同时为最后一次复制保留响应时间。
+            deadline = time.monotonic() + (0.35 if len(attempts) <= 2 else 0.44)
+            next_attempt_at = time.monotonic() + 0.04
             release_waited = False
             capture_source = "wm_copy"
             while time.monotonic() < deadline:
@@ -330,15 +330,15 @@ class Win32HotkeyBackend:
                         break
                 if attempt_index < len(attempts) and time.monotonic() >= next_attempt_at:
                     if not release_waited:
-                        self._wait_for_hotkey_release(timeout=0.12)
+                        self._wait_for_hotkey_release(timeout=0.08)
                         release_waited = True
                     attempt = attempts[attempt_index]
                     capture_source = attempt
                     logger.info("热键取词：复制尝试=%s", attempt)
                     self._send_copy_shortcut(attempt)
                     attempt_index += 1
-                    next_attempt_at = time.monotonic() + 0.12
-                time.sleep(0.02)
+                    next_attempt_at = time.monotonic() + 0.09
+                time.sleep(0.01)
 
             text = text or ""
             logger.info("热键取词：结果=%s", "成功" if text else "空")
@@ -374,12 +374,6 @@ class Win32HotkeyBackend:
             def _key(vk: int, flags: int = 0) -> None:
                 user32.keybd_event(vk, 0, flags, 0)
 
-            for vk in (VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN, VK_CONTROL):
-                flags = KEYEVENTF_KEYUP
-                if vk in (VK_LWIN, VK_RWIN):
-                    flags |= KEYEVENTF_EXTENDEDKEY
-                _key(vk, flags)
-            time.sleep(0.02)
             for vk in modifiers:
                 _key(vk, 0)
             _key(key, 0)
@@ -417,12 +411,11 @@ class Win32HotkeyBackend:
                 inp.ki = k
                 return inp
 
+            # Do not synthesize unrelated modifier key-up events here.  A bare
+            # Alt release activates menus in many Windows applications and can
+            # also interrupt an active IME composition.  The caller already
+            # waits for the registered hotkey to be physically released.
             inputs = [
-                _ki(VK_MENU, KEYEVENTF_KEYUP),
-                _ki(VK_SHIFT, KEYEVENTF_KEYUP),
-                _ki(VK_LWIN, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
-                _ki(VK_RWIN, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP),
-                _ki(VK_CONTROL, KEYEVENTF_KEYUP),
                 _ki(VK_CONTROL, 0),
                 _ki(VK_C, 0),
                 _ki(VK_C, KEYEVENTF_KEYUP),

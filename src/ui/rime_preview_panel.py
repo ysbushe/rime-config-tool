@@ -19,6 +19,7 @@ class RimePreviewPanel(QWidget):
         self.setObjectName("RimePreviewPanel")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._service = preview_service
+        self._slot_count = max(1, min(10, int(getattr(preview_service, "page_size", 5))))
         self._dictionary_index = dictionary_index
         self._repo = repo
         self._reserve_space = reserve_space
@@ -54,7 +55,7 @@ class RimePreviewPanel(QWidget):
 
         self._candidate_cells: list[QLabel] = []
         self._weight_cells: list[QLabel] = []
-        for _ in range(5):
+        for _ in range(self._slot_count):
             candidate = QLabel("")
             candidate.setObjectName("RimePreviewCandidate")
             candidate.setTextFormat(Qt.TextFormat.RichText)
@@ -96,6 +97,8 @@ class RimePreviewPanel(QWidget):
         self._request_timer.setSingleShot(True)
         self._request_timer.setInterval(120)
         self._request_timer.timeout.connect(self._begin_request)
+        self._has_requested = False
+        self._disposed = False
         if self._service is not None and hasattr(self._service, "events"):
             self._service.events.changed.connect(self._refresh)
 
@@ -114,8 +117,21 @@ class RimePreviewPanel(QWidget):
                 self.hide()
             return
         self._show_status("输入法候选预览：正在读取…", "候选与权重将在读取完成后显示。")
+        self._request_timer.setInterval(20 if not self._has_requested else 120)
+        self._has_requested = True
         self._request_timer.start()
 
+    def dispose(self) -> None:
+        """Detach this short-lived panel from the application-wide service."""
+        if self._disposed:
+            return
+        self._disposed = True
+        self._request_timer.stop()
+        if self._service is not None and hasattr(self._service, "events"):
+            try:
+                self._service.events.changed.disconnect(self._refresh)
+            except (RuntimeError, TypeError):
+                pass
     def _begin_request(self) -> None:
         if self._service is None or not self._code:
             return
@@ -135,6 +151,8 @@ class RimePreviewPanel(QWidget):
 
 
     def _refresh(self) -> None:
+        if self._disposed:
+            return
         if self._service is None or not self._code:
             if self._reserve_space:
                 self._show_status("输入法候选预览：等待编码…", "编码建议准备完成后将在此显示。")
@@ -158,9 +176,11 @@ class RimePreviewPanel(QWidget):
         if not snapshot.candidates:
             self._show_status("输入法候选预览：未找到可显示候选。", "", stop=True)
             return
-        self._show_candidates(snapshot.candidates[:5])
+        self._show_candidates(
+            snapshot.candidates[:self._slot_count], snapshot.message,
+        )
 
-    def _show_candidates(self, candidates) -> None:
+    def _show_candidates(self, candidates, workspace_message: str = "") -> None:
         indexed = {}
         if self._dictionary_index is not None:
             for item in self._dictionary_index.lookup_code(self._code, limit=80):
@@ -208,5 +228,7 @@ class RimePreviewPanel(QWidget):
         detail = "权重说明：同一词典内数值越大通常越靠前；不同词典、用户词频和过滤器仍会影响最终顺序。"
         if current_rank is not None:
             detail += f" 当前采集文本位于第 {current_rank} 候选。"
+        if workspace_message:
+            detail += f" {workspace_message}"
         self._details.setText(detail)
         self.show()

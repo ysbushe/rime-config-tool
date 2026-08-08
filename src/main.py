@@ -16,9 +16,38 @@ from src.utils.logger import get_logger  # noqa: E402
 logger = get_logger(__name__)
 
 
+def _prewarm_quick_add_dialog(context: AppContext) -> None:
+    """Move Qt's one-time dialog stylesheet cost before the main window appears."""
+    from time import perf_counter
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from src.ui.quick_add_dialog import QuickAddDialog
+
+    started = perf_counter()
+    dialog = QuickAddDialog(
+        groups=context.group_service.list_groups(),
+        pinyin=context.pinyin_service,
+        repo=context.phrase_repo,
+        system_dictionary_index=context.system_dictionary_index,
+        rime_preview_service=context.rime_preview_service,
+        create_group=context.group_service.add_group,
+    )
+    dialog.dispose()
+    dialog.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    logger.info(
+        "快速收藏：启动期皮肤预热 elapsed_ms=%.1f",
+        (perf_counter() - started) * 1000,
+    )
+
 def main() -> int:
+    if "--input-diagnostics" in sys.argv:
+        from src.diagnostics_main import main as diagnostics_main
+        return diagnostics_main()
     if "--rime-preview-host" in sys.argv or os.environ.get("RIME_CONFIG_PREVIEW_HOST") == "1":
         from src.service.rime_preview_host import run
+        return run()
+    if "--data-engine-host" in sys.argv:
+        from src.service.data_engine_host import run
         return run()
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
@@ -45,6 +74,7 @@ def main() -> int:
 
     context = AppContext.build(settings)
     window = MainWindow(context, start_minimized=start_minimized)
+    _prewarm_quick_add_dialog(context)
     if start_minimized:
         # Create the native handle before hiding. A never-shown Qt window may
         # not be recoverable through a later tray or single-instance request.
@@ -70,6 +100,7 @@ def main() -> int:
         return app.exec()
     finally:
         wake_timer.stop()
+        context.data_engine_client.close()
         instance_guard.release()
 
 

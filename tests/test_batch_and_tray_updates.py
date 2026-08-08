@@ -40,6 +40,29 @@ def test_tray_has_explicit_auto_deploy_action(qapp):
     assert tray.action_auto_deploy.isCheckable()
 
 
+def test_scheme_and_library_context_are_rendered_on_one_line(
+        qapp, app_context, temp_rime_dir):
+    from src.ui.phrase_manager import PhraseManager
+
+    (temp_rime_dir / "wanxiang.schema.yaml").write_text(
+        "schema:\n  schema_id: wanxiang\n", encoding="utf-8"
+    )
+    (temp_rime_dir / "default.custom.yaml").write_text(
+        'patch:\n  "schema_list":\n    - schema: wanxiang\n', encoding="utf-8"
+    )
+    manager = PhraseManager(
+        app_context.phrase_repo, app_context.group_service, app_context.backup_service,
+        app_context.settings, app_context.deploy_service, app_context.pinyin_service,
+    )
+
+    line = manager._scheme_summary.text()
+
+    assert "当前方案：万象拼音" in line
+    assert "本页词库：custom_phrase.txt" in line
+    assert "已从 Rime 启用列表确认" in line
+    assert "\n" not in line
+
+
 def test_quick_add_system_dictionary_hint(qapp):
     class _Index:
         state = "ready"

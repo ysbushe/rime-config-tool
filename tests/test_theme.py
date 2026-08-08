@@ -69,7 +69,7 @@ def test_qss_path_uses_pyinstaller_bundle_ui_resources(tmp_path, monkeypatch) ->
 
 
 def test_frozen_build_uses_embedded_theme_template(tmp_path, monkeypatch) -> None:
-    """发布版不依赖可移动目录中的 QSS 文件读取。"""
+    """发布版缺少随包 QSS 时仍可回退到内嵌模板。"""
     monkeypatch.setattr(theme.sys, "frozen", True, raising=False)
     monkeypatch.setattr(theme.sys, "_MEIPASS", str(tmp_path), raising=False)
 
@@ -77,6 +77,23 @@ def test_frozen_build_uses_embedded_theme_template(tmp_path, monkeypatch) -> Non
     assert "@BG_APP@" not in css
     assert "QDialog" in css
     assert QSS_TEMPLATE.startswith("/* RimeConfig")
+
+
+def test_frozen_build_prefers_packaged_theme_file(tmp_path, monkeypatch) -> None:
+    """发布版优先读取随包 QSS，避免内嵌副本落后于可编辑模板。"""
+    bundled_ui = tmp_path / "src" / "ui"
+    bundled_ui.mkdir(parents=True)
+    (bundled_ui / "application.qss").write_text(
+        "QWidget#Stage8BProbe { color: @ACCENT@; }", encoding="utf-8"
+    )
+    monkeypatch.setattr(theme.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(theme.sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    css = theme.load_theme_qss("light")
+
+    assert "QWidget#Stage8BProbe" in css
+    assert THEME_TOKENS["light"]["@ACCENT@"] in css
+    assert "@ACCENT@" not in css
 
 
 def test_apply_theme_replaces_all_placeholders(qapp) -> None:

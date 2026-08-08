@@ -65,6 +65,54 @@ def test_win32_send_ctrl_c_falls_back_to_keybd_event(monkeypatch):
     assert fake_user32.keybd_event.call_count >= 4
 
 
+def test_win32_send_ctrl_c_does_not_release_unrelated_modifiers(monkeypatch):
+    """A bare Alt key-up can activate app menus and disrupt an active IME."""
+    fake_user32 = MagicMock()
+    fake_user32.SendInput.return_value = 4
+    monkeypatch.setattr(win32_backend, "user32", fake_user32)
+
+    win32_backend.Win32HotkeyBackend._send_ctrl_c()
+
+    count, inputs, _ = fake_user32.SendInput.call_args.args
+    events = [(inputs[i].ki.wVk, inputs[i].ki.dwFlags) for i in range(count)]
+    assert events == [
+        (win32_backend.VK_CONTROL, 0),
+        (win32_backend.VK_C, 0),
+        (win32_backend.VK_C, win32_backend.KEYEVENTF_KEYUP),
+        (win32_backend.VK_CONTROL, win32_backend.KEYEVENTF_KEYUP),
+    ]
+
+
+def test_win32_keybd_shortcut_does_not_release_unrelated_modifiers(monkeypatch):
+    fake_user32 = MagicMock()
+    monkeypatch.setattr(win32_backend, "user32", fake_user32)
+
+    win32_backend.Win32HotkeyBackend._send_keybd_shortcut(
+        (win32_backend.VK_CONTROL, win32_backend.VK_SHIFT),
+        win32_backend.VK_C,
+    )
+
+    events = [(call.args[0], call.args[2]) for call in fake_user32.keybd_event.call_args_list]
+    assert events == [
+        (win32_backend.VK_CONTROL, 0),
+        (win32_backend.VK_SHIFT, 0),
+        (win32_backend.VK_C, 0),
+        (win32_backend.VK_C, win32_backend.KEYEVENTF_KEYUP),
+        (win32_backend.VK_SHIFT, win32_backend.KEYEVENTF_KEYUP),
+        (win32_backend.VK_CONTROL, win32_backend.KEYEVENTF_KEYUP),
+    ]
+
+
+def test_keyboard_backend_ctrl_c_does_not_release_unrelated_modifiers():
+    backend = keyboard_backend.KeyboardBackend()
+    backend._kb = MagicMock()
+
+    backend._send_ctrl_c()
+
+    backend._kb.release.assert_not_called()
+    backend._kb.send.assert_called_once_with("ctrl+c")
+
+
 def test_win32_copy_attempt_order_by_window_class():
     assert win32_backend.Win32HotkeyBackend._copy_attempts_for(
         "Chrome_WidgetWin_1", "Chrome_WidgetWin_1"

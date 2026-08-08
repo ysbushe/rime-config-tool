@@ -24,6 +24,19 @@ class HealthIssue:
 
 
 @dataclass(frozen=True)
+class ExactDuplicateGroup:
+    """Rows that collapse to the same Rime text/code key."""
+
+    text: str
+    code: str
+    entries: tuple[Phrase, ...]
+    first_index: int
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.text, self.code
+
+@dataclass(frozen=True)
 class DuplicateIndex:
     by_text: dict[str, tuple[Phrase, ...]]
     by_code: dict[str, tuple[Phrase, ...]]
@@ -99,6 +112,22 @@ class MetadataStore:
     def prune(self, phrases: Iterable[Phrase]) -> None:
         valid = {self.key(item.text, item.code) for item in phrases}
         self._data["entries"] = {key: value for key, value in self._data["entries"].items() if key in valid}
+
+
+def exact_duplicate_groups(phrases: Iterable[Phrase]) -> list[ExactDuplicateGroup]:
+    """Group exact duplicates in stable first-file order."""
+    indexed: dict[tuple[str, str], list[tuple[int, Phrase]]] = defaultdict(list)
+    for index, phrase in enumerate(phrases):
+        indexed[(phrase.text, raw_code(phrase.code))].append((index, phrase))
+    groups = [
+        ExactDuplicateGroup(
+            text=key[0], code=key[1],
+            entries=tuple(item for _index, item in values),
+            first_index=values[0][0],
+        )
+        for key, values in indexed.items() if len(values) > 1
+    ]
+    return sorted(groups, key=lambda group: group.first_index)
 
 
 def health_check(phrases: Iterable[Phrase], groups=None) -> list[HealthIssue]:
