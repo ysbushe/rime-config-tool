@@ -6,14 +6,65 @@ from src.encoding.code_suggestions import (
     normalize_display_code,
     raw_code,
 )
+from src.encoding.code_input import (
+    allowed_code_characters,
+    sanitize_code_input,
+    validate_code_input,
+)
 from src.repo.phrase_repo import Phrase
 from src.service.pinyin_display_store import PinyinDisplayStore
 from src.service.pinyin_service import PinyinService
 from src.ui.quick_add_dialog import QuickAddDialog
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
 
 from src.ui.phrase_editor import PhraseEditor
 from src.ui.multi_code_editor import MultiCodeEditor
+from src.ui.code_line_edit import CodeLineEdit
+
+
+def test_code_policy_blocks_cjk_fullwidth_and_whitespace() -> None:
+    accepted, rejected = sanitize_code_input("Ni好； '9", "")
+
+    assert accepted == "ni'9"
+    assert set(rejected) == {"好", "；", " "}
+    assert validate_code_input("NI'9") == "ni'9"
+
+
+def test_code_policy_allows_only_symbols_declared_by_schema() -> None:
+    assert ";" not in allowed_code_characters("")
+    assert ";" in allowed_code_characters("abcdefghijklmnopqrstuvwxyz;")
+    assert "›" in allowed_code_characters("abcdefghijklmnopqrstuvwxyz›")
+    assert "；" not in allowed_code_characters("abcdefghijklmnopqrstuvwxyz；")
+    assert sanitize_code_input("ab;/2", "abcdefghijklmnopqrstuvwxyz0123456789;/") == (
+        "ab;/2", "",
+    )
+
+
+def test_code_line_edit_locally_blocks_ime_commit_and_normalizes_keys(qapp) -> None:
+    from PySide6.QtGui import QInputMethodEvent
+    from PySide6.QtTest import QTest
+
+    editor = CodeLineEdit(alphabet="abcdefghijklmnopqrstuvwxyz0123456789/")
+    QTest.keyClicks(editor, "Ab3")
+    event = QInputMethodEvent()
+    event.setCommitString("中文；")
+    editor.inputMethodEvent(event)
+
+    assert editor.text() == "ab3"
+    assert editor.last_rejected == "中文；"
+    assert editor.testAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled) is False
+
+
+def test_code_line_edit_filters_paste_without_affecting_allowed_symbols(qapp) -> None:
+    from PySide6.QtTest import QTest
+
+    editor = CodeLineEdit(alphabet="abcdefghijklmnopqrstuvwxyz0123456789/")
+    qapp.clipboard().setText("ni好；/2")
+    QTest.keyClick(editor, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+
+    assert editor.text() == "ni/2"
+    assert set(editor.last_rejected) == {"好", "；"}
 
 
 def test_separator_aliases_are_normalized_and_removed_for_storage() -> None:

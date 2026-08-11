@@ -434,6 +434,7 @@ class MainWindow(QMainWindow):
             ctx.system_dictionary_index, ctx.rime_preview_service, ctx.metadata_store,
             data_engine_client=ctx.data_engine_client,
             transaction_writer=ctx.file_transaction_writer,
+            code_alphabet=ctx.schema_repo.speller_alphabet(),
         )
         # Infrequently used pages are created on first activation. This keeps
         # the first usable window focused on the word library.
@@ -931,6 +932,7 @@ class MainWindow(QMainWindow):
             self._ctx.backup_service,
             self._ctx.system_dictionary_index,
             self._ctx.rime_preview_service, self._ctx.metadata_store,
+            self._ctx.schema_repo.speller_alphabet(),
         )
         self._reset_dictionary_widget()
         if self._input_widget is not None:

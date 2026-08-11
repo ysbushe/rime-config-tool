@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.encoding.code_input import validate_code_input
 from src.encoding.code_suggestions import normalize_display_code, raw_code
 from src.repo.phrase_repo import Phrase, PhraseRepo
 from src.service.backup_service import BackupService
@@ -91,7 +92,8 @@ class PhraseManager(QWidget):
                  metadata_store: MetadataStore | None = None,
                  parent: QWidget | None = None,
                  data_engine_client=None,
-                 transaction_writer: TransactionalFileWriter | None = None) -> None:
+                 transaction_writer: TransactionalFileWriter | None = None,
+                 code_alphabet: str = "") -> None:
         super().__init__(parent)
         self._repo = repo
         self._groups = groups
@@ -103,6 +105,7 @@ class PhraseManager(QWidget):
         self._rime_preview_service = rime_preview_service
         self._data_engine_client = data_engine_client
         self._transaction_writer = transaction_writer
+        self._code_alphabet = code_alphabet
         self._bundle_writer = PhraseBundleWriter(backup, transaction_writer)
         self._metadata = metadata_store or MetadataStore(repo.path.parent)
         self._last_backup_files: dict[str, str] = {}
@@ -885,7 +888,11 @@ class PhraseManager(QWidget):
         self._btn_select_all.setText("全选")
 
     def _open_duplicates(self) -> None:
-        DuplicateManagerDialog(self._repo.all(), self._apply_duplicate_group, self, self._display_store.editor_display_for).exec()
+        DuplicateManagerDialog(
+            self._repo.all(), self._apply_duplicate_group, self,
+            self._display_store.editor_display_for,
+            code_alphabet=self._code_alphabet,
+        ).exec()
 
     def _apply_duplicate_group(self, original: list[Phrase], entries: list[Phrase]) -> None:
         if not entries:
@@ -1177,7 +1184,8 @@ class PhraseManager(QWidget):
             pinyin=self._pinyin, repo=self._repo,
             system_dictionary_index=self._system_dictionary_index,
             rime_preview_service=self._rime_preview_service,
-            create_group=self._create_group_staged, parent=self,
+            create_group=self._create_group_staged,
+            code_alphabet=self._code_alphabet, parent=self,
         )
         if self._current_group != GroupService.all_group_label():
             editor.set_group_hint(self._current_group)
@@ -1209,6 +1217,7 @@ class PhraseManager(QWidget):
             system_dictionary_index=self._system_dictionary_index,
             rime_preview_service=self._rime_preview_service,
             create_group=self._create_group_staged,
+            code_alphabet=self._code_alphabet,
         )
         if editor.exec() != editor.DialogCode.Accepted:
             self._discard_staged_groups(original_groups)
@@ -1257,7 +1266,9 @@ class PhraseManager(QWidget):
         displays = [str(values.get("display_code", ""))] + list(values.get("additional_codes", []))
         unique: list[str] = []
         for display in displays:
-            display = normalize_display_code(display)
+            display = validate_code_input(
+                display, self._code_alphabet, allow_empty=True,
+            )
             if raw_code(display) and raw_code(display) not in {raw_code(item) for item in unique}:
                 unique.append(display)
         if not unique:
@@ -1301,6 +1312,9 @@ class PhraseManager(QWidget):
                       weight_updates: Optional[dict[str, int]] = None) -> None:
         weight = self._clamp_weight(weight)
         code = raw_code(code)
+        code = raw_code(validate_code_input(
+            code, self._code_alphabet, allow_empty=True,
+        ))
         existing = self._repo.find(text, code)
         for key, new_weight in (weight_updates or {}).items():
             existing_text, separator, existing_code = key.partition("\t")
@@ -1419,7 +1433,8 @@ class PhraseManager(QWidget):
     def reattach(self, repo: PhraseRepo, groups: GroupService,
                  backup: BackupService,
                  system_dictionary_index: SystemDictionaryIndex | None = None,
-                 rime_preview_service=None, metadata_store: MetadataStore | None = None) -> None:
+                 rime_preview_service=None, metadata_store: MetadataStore | None = None,
+                 code_alphabet: str = "") -> None:
         """Reconnect sidecars and views after Rime directory or sandbox changes."""
         self._repo = repo
         self._groups = groups
@@ -1428,6 +1443,7 @@ class PhraseManager(QWidget):
         self._system_dictionary_index = system_dictionary_index
         self._rime_preview_service = rime_preview_service
         self._metadata = metadata_store or MetadataStore(repo.path.parent)
+        self._code_alphabet = code_alphabet
         self._display_store = PinyinDisplayStore(repo.path.parent, self._pinyin)
         self._group_panel.reattach(groups)
         self._group_panel.select_all(emit=False)
@@ -1577,6 +1593,7 @@ class PhraseManager(QWidget):
             system_dictionary_index=self._system_dictionary_index,
             rime_preview_service=self._rime_preview_service,
             create_group=self._create_group_staged, notice=notice,
+            code_alphabet=self._code_alphabet,
             parent=None,
         )
         get_logger(__name__).info(

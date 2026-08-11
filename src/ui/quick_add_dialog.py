@@ -34,9 +34,11 @@ from PySide6.QtWidgets import (
 )
 
 from src.service.pinyin_service import PinyinService
+from src.encoding.code_input import validate_code_input
 from src.encoding.code_suggestions import build_suggestions, normalize_display_code, raw_code
 from src.repo.phrase_repo import PhraseRepo
 from src.ui.click_activated_combo import ClickActivatedComboBox
+from src.ui.code_line_edit import CodeLineEdit
 from src.ui.encoding_suggestion_panel import EncodingSuggestionPanel
 from src.ui.rime_preview_panel import RimePreviewPanel
 
@@ -52,6 +54,7 @@ class QuickAddDialog(QDialog):
                  rime_preview_service=None,
                  create_group=None,
                  notice: str = "",
+                 code_alphabet: str = "",
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("AppDialog")
@@ -62,6 +65,7 @@ class QuickAddDialog(QDialog):
         self._system_dictionary_index = system_dictionary_index
         self._rime_preview_service = rime_preview_service
         self._create_group_callback = create_group
+        self._code_alphabet = code_alphabet
         self._recommended_weight: Optional[int] = None
         self._custom_weight: Optional[int] = None  # 选择自定义后的具体权重
         self._weight_explicit = False
@@ -137,7 +141,7 @@ class QuickAddDialog(QDialog):
         self._text.setPlaceholderText("选中文本（自动预填剪贴板）")
         self._text.textEdited.connect(self._update_code)
 
-        self._code = QLineEdit()
+        self._code = CodeLineEdit(alphabet=self._code_alphabet)
         self._code.setPlaceholderText("可点击建议或手填；弯引号和反引号会自动更正")
         self._code.textEdited.connect(self._normalize_code_input)
         self._btn_separator = QPushButton("'")
@@ -399,7 +403,7 @@ class QuickAddDialog(QDialog):
             row_layout.setContentsMargins(0, 0, 0, 0)
             label = QLabel(f"编码{offset + 1}")
             label.setObjectName("ExtraCodeName")
-            value = QLineEdit(display)
+            value = CodeLineEdit(display, row, alphabet=self._code_alphabet)
             value.setObjectName("ExtraCodeEdit")
             value.textEdited.connect(
                 lambda text, index=offset: self._edit_additional_code(index, text)
@@ -588,9 +592,17 @@ class QuickAddDialog(QDialog):
         if not self._text.text().strip():
             self._err.setText("文本不能为空。")
             return
-        normalized_extras = [
-            normalize_display_code(item) for item in self._additional_codes
-        ]
+        try:
+            normalized_main = validate_code_input(
+                self._code.text(), self._code_alphabet, allow_empty=True,
+            )
+            normalized_extras = [
+                validate_code_input(item, self._code_alphabet)
+                for item in self._additional_codes
+            ]
+        except ValueError as exc:
+            self._err.setText(str(exc))
+            return
         if any(not raw_code(item) for item in normalized_extras):
             self._err.setText("新增编码不能为空。")
             return
@@ -598,6 +610,7 @@ class QuickAddDialog(QDialog):
         if len(raw_extras) != len(set(raw_extras)):
             self._err.setText("新增编码不能重复。")
             return
+        self._code.setText(normalized_main)
         self._additional_codes = normalized_extras
         self._err.setText("")
         self.accept()

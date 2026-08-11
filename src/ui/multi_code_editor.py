@@ -8,9 +8,11 @@ from PySide6.QtWidgets import (
 )
 
 from src.encoding.code_suggestions import build_suggestions, normalize_display_code, raw_code
+from src.encoding.code_input import validate_code_input
 from src.repo.phrase_repo import Phrase, PhraseRepo
 from src.service.pinyin_service import PinyinService
 from src.ui.click_activated_combo import ClickActivatedComboBox
+from src.ui.code_line_edit import CodeLineEdit
 from src.ui.click_activated_spin import ClickActivatedSpinBox
 from src.ui.encoding_suggestion_panel import EncodingSuggestionPanel
 from src.ui.rime_preview_panel import RimePreviewPanel
@@ -23,7 +25,7 @@ class MultiCodeEditor(QDialog):
                  pinyin: PinyinService, display_for, parent=None, *,
                  groups: list[str] | None = None, group: str = "",
                  system_dictionary_index=None, rime_preview_service=None,
-                 create_group=None) -> None:
+                 create_group=None, code_alphabet: str = "") -> None:
         super().__init__(parent)
         self.setWindowTitle("编辑多个编码")
         self.setObjectName("AppDialog")
@@ -34,6 +36,7 @@ class MultiCodeEditor(QDialog):
         self._display_for = display_for
         self._groups = list(groups or [])
         self._create_group_callback = create_group
+        self._code_alphabet = code_alphabet
         self._rows: list[tuple[QLineEdit, ClickActivatedSpinBox, QPushButton]] = []
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -176,7 +179,10 @@ class MultiCodeEditor(QDialog):
     def _add_row(self, code: str, weight: int) -> None:
         row = QFrame(self)
         row.setObjectName("ExistingCodeRow")
-        line = QLineEdit(normalize_display_code(code))
+        line = CodeLineEdit(
+            normalize_display_code(code), row, alphabet=self._code_alphabet,
+        )
+        line.setProperty("originalCode", normalize_display_code(code))
         line.setPlaceholderText("编码")
         line.textEdited.connect(lambda _text: self._on_code_edited())
         line.selectionChanged.connect(self._refresh_preview)
@@ -235,6 +241,18 @@ class MultiCodeEditor(QDialog):
     def _accept(self) -> None:
         if not self.text_value():
             self._error.setText("文本不能为空。")
+            return
+        try:
+            for line, _spin, _remove in self._rows:
+                current = normalize_display_code(line.text())
+                original = str(line.property("originalCode") or "")
+                if current != original:
+                    current = validate_code_input(
+                        current, self._code_alphabet, allow_empty=True,
+                    )
+                line.setText(current)
+        except ValueError as exc:
+            self._error.setText(str(exc))
             return
         entries = self.entries()
         if not entries:

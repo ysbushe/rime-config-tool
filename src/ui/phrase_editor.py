@@ -29,9 +29,11 @@ from PySide6.QtWidgets import (
 )
 
 from src.encoding.code_suggestions import build_suggestions, normalize_display_code, raw_code
+from src.encoding.code_input import validate_code_input
 from src.repo.phrase_repo import Phrase, PhraseRepo
 from src.ui.click_activated_spin import ClickActivatedSpinBox
 from src.ui.click_activated_combo import ClickActivatedComboBox
+from src.ui.code_line_edit import CodeLineEdit
 from src.ui.encoding_suggestion_panel import EncodingSuggestionPanel
 from src.ui.rime_preview_panel import RimePreviewPanel
 from src.service.pinyin_service import PinyinService
@@ -48,6 +50,7 @@ class PhraseEditor(QDialog):
                  system_dictionary_index=None,
                  rime_preview_service=None,
                  create_group=None,
+                 code_alphabet: str = "",
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("AppDialog")
@@ -61,6 +64,7 @@ class PhraseEditor(QDialog):
         self._system_dictionary_index = system_dictionary_index
         self._rime_preview_service = rime_preview_service
         self._create_group_callback = create_group
+        self._code_alphabet = code_alphabet
         self._additional_codes: list[str] = []
         self._build_ui()
         self._fill(phrase)
@@ -78,7 +82,7 @@ class PhraseEditor(QDialog):
         form.setSpacing(10)
 
         self._text = QLineEdit()
-        self._code = QLineEdit()
+        self._code = CodeLineEdit(alphabet=self._code_alphabet)
         self._code.setPlaceholderText("可手填简码/缩写/英文 id；或点『生成全拼』")
         self._text.textEdited.connect(self._on_text_edited)
 
@@ -254,7 +258,7 @@ class PhraseEditor(QDialog):
             row_layout.setContentsMargins(0, 0, 0, 0)
             label = QLabel(f"编码{index}")
             label.setObjectName("ExtraCodeName")
-            value = QLineEdit(display)
+            value = CodeLineEdit(display, row, alphabet=self._code_alphabet)
             value.setReadOnly(True)
             remove = QPushButton("删除")
             remove.setObjectName("SuggestionAdd")
@@ -319,6 +323,20 @@ class PhraseEditor(QDialog):
         text = self._text.text().strip()
         if not text:
             self._err.setText("文本不能为空。")
+            return
+        try:
+            current = normalize_display_code(self._code.text())
+            if self._phrase is None or raw_code(current) != self._phrase.code:
+                current = validate_code_input(
+                    current, self._code_alphabet, allow_empty=True,
+                )
+            self._code.setText(current)
+            self._additional_codes = [
+                validate_code_input(item, self._code_alphabet)
+                for item in self._additional_codes
+            ]
+        except ValueError as exc:
+            self._err.setText(str(exc))
             return
         # 编码允许为空（RIME 允许仅文本行），但建议填写
         self._err.setText("")

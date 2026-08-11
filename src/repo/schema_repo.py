@@ -117,6 +117,10 @@ class SchemaRepo:
     def schema_version(self) -> str:
         return str((self._data.get("schema") or {}).get("version", ""))
 
+    def speller_alphabet(self) -> str:
+        """Return the active schema's explicit keyboard alphabet, if present."""
+        return str((self._data.get("speller") or {}).get("alphabet", ""))
+
     # ------------------------------------------------------------------ #
     # switches 复选
     # ------------------------------------------------------------------ #

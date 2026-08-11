@@ -30,6 +30,7 @@ def _prewarm_quick_add_dialog(context: AppContext) -> None:
         system_dictionary_index=context.system_dictionary_index,
         rime_preview_service=context.rime_preview_service,
         create_group=context.group_service.add_group,
+        code_alphabet=context.schema_repo.speller_alphabet(),
     )
     dialog.dispose()
     dialog.deleteLater()
