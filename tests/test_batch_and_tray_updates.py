@@ -59,7 +59,7 @@ def test_scheme_and_library_context_are_rendered_on_one_line(
 
     assert "当前方案：万象拼音" in line
     assert "本页词库：custom_phrase.txt" in line
-    assert "已从 Rime 启用列表确认" in line
+    assert "已从唯一启用方案确认" in line
     assert "\n" not in line
 
 

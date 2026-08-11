@@ -32,14 +32,22 @@ class PhraseBundleWriter:
         repo: PhraseRepo,
         groups: GroupService,
         display_store: PinyinDisplayStore,
-    ) -> None:
+    ) -> dict[str, str]:
+        saved: dict[str, str] = {}
         try:
-            self.backup_service.backup(repo.path.name)
-            self.backup_service.backup(display_store.path.name)
+            path = self.backup_service.backup(repo.path.name)
+            if path is not None:
+                saved[repo.path.name] = str(path)
+            path = self.backup_service.backup(display_store.path.name)
+            if path is not None:
+                saved[display_store.path.name] = str(path)
             if groups.enabled:
-                self.backup_service.backup(groups.path.name)
+                path = self.backup_service.backup(groups.path.name)
+                if path is not None:
+                    saved[groups.path.name] = str(path)
         except Exception as exc:
             logger.warning("备份失败：%s", exc)
+        return saved
 
     def save(
         self,

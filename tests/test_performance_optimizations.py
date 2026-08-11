@@ -86,17 +86,81 @@ def test_preview_engine_stays_warm_for_ten_minutes() -> None:
 def test_reentering_settings_tab_does_not_refresh_dictionary_catalog(qapp, app_context) -> None:
     from src.ui.main_window import MainWindow, TAB_LIBRARY, TAB_SETTINGS
 
-    window = MainWindow(app_context)
+    window = MainWindow(app_context, background_tasks_enabled=False)
     window._tabs.setCurrentIndex(TAB_SETTINGS)
+    qapp.processEvents()
     assert window._settings_widget is not None
     refresh = MagicMock()
     window._settings_widget.refresh = refresh
 
     window._tabs.setCurrentIndex(TAB_LIBRARY)
     window._tabs.setCurrentIndex(TAB_SETTINGS)
+    qapp.processEvents()
 
     refresh.assert_not_called()
-    window.close()
+    window.dispose()
+    qapp.processEvents()
+
+
+def test_rapid_tab_switch_only_activates_latest_lazy_page(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow, TAB_DICTIONARIES, TAB_INPUT
+
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    open_dictionary = MagicMock()
+    open_input = MagicMock()
+    window._ensure_dictionary_widget = open_dictionary
+    window._ensure_input_widget = open_input
+
+    window._tabs.setCurrentIndex(TAB_DICTIONARIES)
+    window._tabs.setCurrentIndex(TAB_INPUT)
+    qapp.processEvents()
+
+    open_dictionary.assert_not_called()
+    open_input.assert_called_once_with()
+    window.dispose()
+    qapp.processEvents()
+
+
+def test_main_window_dispose_stops_background_services(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow
+
+    close_data_engine = MagicMock(wraps=app_context.data_engine_client.close)
+    close_preview = MagicMock(wraps=app_context.rime_preview_service.close)
+    unregister_hotkey = MagicMock(wraps=app_context.hotkey_manager.unregister)
+    app_context.data_engine_client.close = close_data_engine
+    app_context.rime_preview_service.close = close_preview
+    app_context.hotkey_manager.unregister = unregister_hotkey
+    window = MainWindow(app_context, background_tasks_enabled=False)
+
+    assert not window._scheduled_backup_timer.isActive()
+    assert not window._environment_monitor._timer.isActive()
+    assert not window._index_status_timer.isActive()
+
+    window.dispose()
+    qapp.processEvents()
+
+    assert window._disposed
+    close_data_engine.assert_called_once_with()
+    close_preview.assert_called_once_with()
+    unregister_hotkey.assert_called_once_with()
+
+
+def test_main_navigation_excludes_frozen_candidate_appearance(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow
+
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    titles = [
+        window._tabs._sidebar.item(index).text()
+        for index in range(window._tabs._sidebar.count())
+    ]
+
+    assert "候选窗外观" not in titles
+    assert titles == [
+        "词库工作台", "词典中心", "词库维护",
+        "输入习惯", "符号管理", "设置",
+    ]
+    window.dispose()
+    qapp.processEvents()
 
 
 def test_slow_dictionary_catalog_does_not_block_settings_construction(

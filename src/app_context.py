@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 from typing import Optional
 
 from src.repo.phrase_repo import PhraseRepo
@@ -25,6 +27,12 @@ from src.service.dictionary_catalog import DictionaryCatalogService
 from src.service.vnext_dictionary_index import VNextDictionaryIndex
 from src.service.file_transaction import TransactionalFileWriter
 from src.service.rime_preview_service import RimePreviewService
+from src.service.managed_files import (
+    ActiveSchemeResolution,
+    ManagedSchemeFiles,
+    resolve_active_scheme,
+    known_managed_schemes,
+)
 from src.settings import Settings
 from src.config.paths import settings_path
 from src.utils.logger import get_logger
@@ -61,6 +69,7 @@ class AppContext:
     file_transaction_writer: TransactionalFileWriter
     rime_preview_service: RimePreviewService
     metadata_store: MetadataStore
+    active_scheme: ActiveSchemeResolution
 
     @classmethod
     def build(cls, settings: Optional[Settings] = None) -> "AppContext":
@@ -70,10 +79,18 @@ class AppContext:
         sandbox = SandboxService(settings)
         # 沙盒开启 → 指向副本目录；否则真实目录（可能为空）
         rime_dir = sandbox.active_rime_dir()
+        scheme_source = settings.rime_dir if settings.rime_dir else rime_dir
+        active_scheme = resolve_active_scheme(scheme_source)
+        managed = active_scheme.files
 
         pinyin = PinyinService()
+        policy = settings.scheme_backup_policy(active_scheme.schema_id)
         backup = BackupService(
-            rime_dir, keep=settings.backup_count, backup_dir=settings.backup_dir)
+            rime_dir,
+            keep=policy["backup_count"],
+            backup_dir=settings.backup_dir,
+            namespace=managed.backup_prefix if managed else "unresolved",
+        )
         backup.auto_cleanup = settings.backup_auto_cleanup
         deploy = DeployService(settings)
         autostart = Autostart()
@@ -92,17 +109,23 @@ class AppContext:
         metadata_store = MetadataStore(rime_dir)
 
         # 目录有效 → 指向真实文件；否则给空仓储（UI 提示设置目录）
-        if rime_dir:
-            phrase_repo = PhraseRepo(f"{rime_dir}/custom_phrase.txt", cache=cache)
-            schema_repo = SchemaRepo(_active_schema_path(rime_dir), cache=cache)
+        if rime_dir and managed and active_scheme.writable:
+            phrase_repo = PhraseRepo(f"{rime_dir}/{managed.phrase_filename}", cache=cache)
+            schema_repo = SchemaRepo(f"{rime_dir}/{managed.schema_filename}", cache=cache)
             symbols_repo = SymbolsRepo(f"{rime_dir}/symbols_v.yaml", cache=cache)
-            group_service = GroupService(rime_dir)
+            group_service = GroupService(rime_dir, managed.phrase_filename)
         else:
-            logger.warning("Rime 目录未设置，仓储为空，请在设置页指定。")
+            logger.warning("Rime 目录或当前方案未确认，仓储保持只读空状态：%s", active_scheme.reason)
             phrase_repo = PhraseRepo("", cache=cache)  # 空路径，load 时为空
             schema_repo = SchemaRepo("", cache=cache)
             symbols_repo = SymbolsRepo("", cache=cache)
             group_service = GroupService("")
+
+        if rime_dir and managed and active_scheme.writable:
+            cls._restore_missing_groups(
+                rime_dir, managed, phrase_repo, group_service,
+                file_transaction_writer,
+            )
 
         return cls(
             settings=settings,
@@ -122,20 +145,83 @@ class AppContext:
             file_transaction_writer=file_transaction_writer,
             rime_preview_service=rime_preview,
             metadata_store=metadata_store,
+            active_scheme=active_scheme,
         )
 
     def rebuild_repos(self) -> None:
         """Rime 目录 / 沙盒模式变化后重建仓储与备份服务。"""
         rime_dir = self.sandbox_service.active_rime_dir()
+        scheme_source = self.settings.rime_dir if self.settings.rime_dir else rime_dir
+        self.active_scheme = resolve_active_scheme(scheme_source)
+        managed = self.active_scheme.files
         cache = self.cache_service
         self.backup_service.rime_dir = rime_dir
-        self.backup_service.keep = self.settings.backup_count
+        policy = self.settings.scheme_backup_policy(self.active_scheme.schema_id)
+        self.backup_service.keep = policy["backup_count"]
         self.backup_service.auto_cleanup = self.settings.backup_auto_cleanup
         self.backup_service.backup_dir = self.settings.backup_dir
-        self.phrase_repo.__init__(f"{rime_dir}/custom_phrase.txt", cache=cache)
-        self.schema_repo.__init__(_active_schema_path(rime_dir), cache=cache)
-        self.symbols_repo.__init__(f"{rime_dir}/symbols_v.yaml", cache=cache)
-        self.group_service.__init__(rime_dir)
+        self.backup_service.namespace = managed.backup_prefix if managed else "unresolved"
+        phrase_path = f"{rime_dir}/{managed.phrase_filename}" if managed and self.active_scheme.writable else ""
+        schema_path = f"{rime_dir}/{managed.schema_filename}" if managed and self.active_scheme.writable else ""
+        self.phrase_repo.reset(phrase_path, cache=cache)
+        self.schema_repo.reset(schema_path, cache=cache)
+        self.symbols_repo.reset(f"{rime_dir}/symbols_v.yaml" if rime_dir else "", cache=cache)
+        self.group_service.reset(
+            rime_dir if managed and self.active_scheme.writable else "",
+            managed.phrase_filename if managed else "custom_phrase.txt",
+        )
+        if rime_dir and managed and self.active_scheme.writable:
+            self._restore_missing_groups(
+                rime_dir, managed, self.phrase_repo, self.group_service,
+                self.file_transaction_writer,
+            )
         self.system_dictionary_index.reset(rime_dir)
         self.rime_preview_service.reset(rime_dir, self.deploy_service.deployer_path)
         self.metadata_store = MetadataStore(rime_dir)
+
+    def shutdown(self) -> None:
+        """Release process-wide helpers; safe to call more than once."""
+        self.hotkey_manager.unregister()
+        self.rime_preview_service.close()
+        self.data_engine_client.close()
+
+    @property
+    def active_scheme_id(self) -> str:
+        return self.active_scheme.schema_id
+
+    @property
+    def managed_files(self) -> ManagedSchemeFiles | None:
+        return self.active_scheme.files
+
+    def active_scheme_changed(self) -> bool:
+        source = self.settings.rime_dir or self.sandbox_service.active_rime_dir()
+        return resolve_active_scheme(source).schema_id != self.active_scheme.schema_id
+
+    @staticmethod
+    def _restore_missing_groups(
+        rime_dir: str,
+        managed: ManagedSchemeFiles,
+        phrase_repo: PhraseRepo,
+        groups: GroupService,
+        writer: TransactionalFileWriter,
+    ) -> int:
+        if groups.path.exists():
+            return 0
+        valid_keys = {phrase.key for phrase in phrase_repo.all()}
+        best_source = None
+        best_matches = -1
+        root = Path(rime_dir)
+        for candidate in known_managed_schemes():
+            if candidate.schema_id == managed.schema_id:
+                continue
+            path = root / candidate.group_filename
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                matches = len(set(dict(raw.get("membership", {}))) & valid_keys)
+            except Exception:
+                continue
+            if matches > best_matches:
+                best_source, best_matches = path, matches
+        if best_source is None or best_matches <= 0:
+            return 0
+        return groups.restore_compatible_sidecar(best_source, valid_keys, writer)

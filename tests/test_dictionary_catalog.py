@@ -186,3 +186,34 @@ def test_dictionary_center_keeps_staged_edit_after_external_conflict(
     assert personal.read_text(encoding="utf-8") == "外部词\twaibuci\t2\n"
     assert dialog._editable_dirty is True
     assert "暂存修改已保留" in dialog._status.text()
+
+
+def test_embedded_dictionary_center_loads_catalog_without_blocking_gui(
+        qapp, tmp_path, monkeypatch) -> None:
+    import time
+    from PySide6.QtTest import QTest
+
+    _activate(tmp_path, "wanxiang")
+    _write_dictionary(tmp_path / "wanxiang.dict.yaml")
+    original = DictionaryCatalogService.catalog
+
+    def slow_catalog(self, schema_id):
+        time.sleep(0.15)
+        return original(self, schema_id)
+
+    monkeypatch.setattr(DictionaryCatalogService, "catalog", slow_catalog)
+    started = time.perf_counter()
+    dialog = DictionaryCenterDialog(tmp_path, embedded=True)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.10
+    assert "后台读取" in dialog._status.text()
+    # The full suite also exercises the real-size local dictionary snapshot;
+    # leave enough scheduling margin for a busy Windows runner while keeping
+    # the constructor latency assertion strict.
+    for _ in range(250):
+        QTest.qWait(20)
+        if not dialog._catalog_loading:
+            break
+    assert dialog._catalog_loading is False
+    dialog.dispose()

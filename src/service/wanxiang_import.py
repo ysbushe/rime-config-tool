@@ -99,6 +99,21 @@ class PhraseDocument:
         if self.lines:
             self.has_final_newline = True
 
+    def replace_entry(self, entry: PhraseEntry) -> bool:
+        """Replace one target row while retaining its original file position."""
+        for index, line in enumerate(self.lines):
+            if line.entry is None or line.entry.key != entry.key:
+                continue
+            replacement = PhraseEntry(
+                line.line_number, entry.raw, entry.text, entry.code,
+                entry.weight_raw, entry.weight_value,
+            )
+            self.lines[index] = PhraseLine(
+                "entry", entry.raw, line.line_number, replacement,
+            )
+            return True
+        return False
+
 
 @dataclass(frozen=True)
 class CompatibilityWarning:
@@ -107,20 +122,27 @@ class CompatibilityWarning:
     message: str
 
 
+@dataclass(frozen=True)
+class ImportConflict:
+    source: PhraseEntry
+    target: PhraseEntry
+
+
 @dataclass
 class ImportPlan:
     source_path: Path
     target_path: Path
-    patch_path: Path
+    patch_path: Path | None
     fingerprints: dict[Path, FileFingerprint]
     target_bytes: bytes
-    patch_bytes: bytes
+    patch_bytes: bytes | None
     source_count: int
     import_count: int
     skipped_exact: int
     skipped_different: int
     warnings: list[CompatibilityWarning] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
+    conflicts: list[ImportConflict] = field(default_factory=list)
 
     @property
     def can_execute(self) -> bool:
@@ -317,6 +339,9 @@ class WanxiangImportService:
         self.rime_dir = Path(rime_dir)
         self.backup_root = Path(backup_root)
         self._deploy = deploy
+        self.source_name = "白霜拼音"
+        self.target_name = "万象拼音"
+        self.requires_wanxiang = True
 
     @property
     def source_path(self) -> Path:
@@ -330,7 +355,8 @@ class WanxiangImportService:
     def patch_path(self) -> Path:
         return self.rime_dir / WANXIANG_CUSTOM_FILENAME
 
-    def plan(self) -> ImportPlan:
+    def plan(self, overwrite_keys: set[tuple[str, str]] | None = None) -> ImportPlan:
+        overwrite_keys = set(overwrite_keys or ())
         blockers: list[str] = []
         schema_path = self.rime_dir / WANXIANG_SCHEMA_FILENAME
         if not schema_path.is_file():
@@ -357,6 +383,7 @@ class WanxiangImportService:
 
         existing = {entry.key: entry for entry in target.entries}
         accepted: list[PhraseEntry] = []
+        conflicts: list[ImportConflict] = []
         skipped_exact = 0
         skipped_different = 0
         for entry in source.entries:
@@ -365,7 +392,12 @@ class WanxiangImportService:
                 if current.raw == entry.raw:
                     skipped_exact += 1
                 else:
-                    skipped_different += 1
+                    conflicts.append(ImportConflict(entry, current))
+                    if entry.key in overwrite_keys and target.replace_entry(entry):
+                        accepted.append(entry)
+                        existing[entry.key] = entry
+                    else:
+                        skipped_different += 1
                 continue
             existing[entry.key] = entry
             accepted.append(entry)
@@ -390,6 +422,7 @@ class WanxiangImportService:
             skipped_different=skipped_different,
             warnings=scan_compatibility(accepted),
             blockers=blockers,
+            conflicts=conflicts,
         )
 
     def execute(self, plan: ImportPlan, *, verify_timeout: float = 30.0) -> ImportResult:
@@ -405,6 +438,7 @@ class WanxiangImportService:
         written = {plan.target_path: plan.target_bytes, plan.patch_path: plan.patch_bytes}
         try:
             _atomic_write_bytes(plan.target_path, plan.target_bytes)
+            assert plan.patch_path is not None and plan.patch_bytes is not None
             _atomic_write_bytes(plan.patch_path, plan.patch_bytes)
             if plan.target_path.read_bytes() != plan.target_bytes:
                 raise ImportExecutionError("写入后校验失败：目标词库内容不一致。")
@@ -491,3 +525,122 @@ class WanxiangImportService:
                     pass
             time.sleep(0.25)
         return False
+
+
+class DirectSchemeImportService:
+    """Copy missing phrase rows between two already-mounted personal dictionaries.
+
+    This is used for the reverse Wanxiang -> White Frost direction.  It never
+    changes either schema's mount configuration: the destination dictionary is
+    already the active scheme's managed phrase file.
+    """
+
+    requires_wanxiang = False
+
+    def __init__(self, rime_dir: str | Path, backup_root: str | Path,
+                 deploy: Callable[[], tuple[bool, str]], *,
+                 source_filename: str, target_filename: str,
+                 source_name: str, target_name: str) -> None:
+        self.rime_dir = Path(rime_dir)
+        self.backup_root = Path(backup_root)
+        self._deploy = deploy
+        self.source_path = self.rime_dir / source_filename
+        self.target_path = self.rime_dir / target_filename
+        self.source_name = source_name
+        self.target_name = target_name
+
+    def plan(self, overwrite_keys: set[tuple[str, str]] | None = None) -> ImportPlan:
+        overwrite_keys = set(overwrite_keys or ())
+        source = parse_phrase_file(self.source_path, source_name=f"{self.source_name}个人词库")
+        target = parse_phrase_file(self.target_path, source_name=f"{self.target_name}个人词库")
+        blockers: list[str] = []
+        if source.unknown_lines:
+            nums = "、".join(str(line.line_number) for line in source.unknown_lines[:8])
+            blockers.append(f"来源包含无法识别的行：{nums}；为保证无损，本次不会跳过后继续。")
+        if not source.entries:
+            blockers.append("来源词库没有可导入的条目。")
+        existing = {entry.key: entry for entry in target.entries}
+        accepted: list[PhraseEntry] = []
+        conflicts: list[ImportConflict] = []
+        skipped_exact = 0
+        skipped_different = 0
+        for entry in source.entries:
+            current = existing.get(entry.key)
+            if current is not None:
+                if current.raw == entry.raw:
+                    skipped_exact += 1
+                else:
+                    conflicts.append(ImportConflict(entry, current))
+                    if entry.key in overwrite_keys and target.replace_entry(entry):
+                        accepted.append(entry)
+                        existing[entry.key] = entry
+                    else:
+                        skipped_different += 1
+                continue
+            existing[entry.key] = entry
+            accepted.append(entry)
+        target.append_entries(accepted)
+        watched = (self.source_path, self.target_path)
+        return ImportPlan(
+            source_path=self.source_path,
+            target_path=self.target_path,
+            patch_path=None,
+            fingerprints={path: fingerprint(path) for path in watched},
+            target_bytes=target.render(),
+            patch_bytes=None,
+            source_count=len(source.entries),
+            import_count=len(accepted),
+            skipped_exact=skipped_exact,
+            skipped_different=skipped_different,
+            warnings=scan_compatibility(accepted),
+            blockers=blockers,
+            conflicts=conflicts,
+        )
+
+    def execute(self, plan: ImportPlan, *, verify_timeout: float = 30.0) -> ImportResult:
+        del verify_timeout
+        if plan.blockers:
+            raise ImportExecutionError("；".join(plan.blockers))
+        if plan.import_count <= 0:
+            raise ImportExecutionError("没有需要写入的新条目。")
+        for path, expected in plan.fingerprints.items():
+            if fingerprint(path) != expected:
+                raise ImportExecutionError(f"{path.name} 在预览后发生变化，请重新扫描。")
+        snapshot = self._snapshot((plan.target_path,))
+        written = {plan.target_path: plan.target_bytes}
+        try:
+            _atomic_write_bytes(plan.target_path, plan.target_bytes)
+            if plan.target_path.read_bytes() != plan.target_bytes:
+                raise ImportExecutionError("写入后校验失败：目标词库内容不一致。")
+            parse_phrase_file(plan.target_path, source_name=f"写入后的{self.target_name}目标词库")
+            ok, message = self._deploy()
+            if not ok:
+                raise ImportExecutionError(message)
+            if fingerprint(plan.source_path) != plan.fingerprints[plan.source_path]:
+                raise ImportExecutionError("来源词库在导入期间发生变化，目标变更将回滚。")
+            if plan.target_path.read_bytes() != plan.target_bytes:
+                raise ImportExecutionError("目标文件在部署期间被外部修改。")
+            return ImportResult(
+                plan.import_count, plan.skipped_exact, plan.skipped_different,
+                snapshot, message,
+            )
+        except Exception as exc:
+            conflicts = self._restore_snapshot(snapshot, written)
+            if conflicts:
+                raise ImportExecutionError(
+                    f"{exc}；检测到外部修改，未覆盖目标文件。请核对事务快照：{snapshot}"
+                ) from exc
+            try:
+                self._deploy()
+            except Exception:
+                pass
+            if isinstance(exc, ImportExecutionError):
+                raise
+            raise ImportExecutionError(f"导入失败，已恢复原文件：{exc}") from exc
+
+    def _snapshot(self, paths: Iterable[Path]) -> Path:
+        return WanxiangImportService._snapshot(self, paths)
+
+    @staticmethod
+    def _restore_snapshot(snapshot: Path, written: dict[Path, bytes]) -> list[Path]:
+        return WanxiangImportService._restore_snapshot(snapshot, written)

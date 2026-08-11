@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QLabel,
@@ -55,11 +56,23 @@ class NavigationShell(QWidget):
         rail_layout.addWidget(section)
         rail_layout.addWidget(self._sidebar, 1)
 
-        self._connection_status = QLabel("●  正在检查 Rime", rail)
+        status_row = QWidget(rail)
+        status_layout = QHBoxLayout(status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(7)
+        self._connection_dot = QLabel("●", status_row)
+        self._connection_dot.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop
+        )
+        self._connection_status = QLabel("正在检查 Rime", status_row)
         self._connection_status.setObjectName("NavigationStatus")
         self._connection_status.setProperty("state", "checking")
         self._connection_status.setWordWrap(True)
-        rail_layout.addWidget(self._connection_status)
+        self._connection_dot.setObjectName("NavigationStatusDot")
+        self._connection_dot.setProperty("state", "checking")
+        status_layout.addWidget(self._connection_dot)
+        status_layout.addWidget(self._connection_status, 1)
+        rail_layout.addWidget(status_row)
 
         self._stack = QStackedWidget(self)
         self._stack.setObjectName("WorkspaceStack")
@@ -106,15 +119,27 @@ class NavigationShell(QWidget):
 
     def set_connection_status(self, text: str, state: str = "ready") -> None:
         """Update the persistent environment status without changing pages."""
-        self._connection_status.setText(text)
-        self._connection_status.setProperty("state", state)
-        self._connection_status.style().unpolish(self._connection_status)
-        self._connection_status.style().polish(self._connection_status)
+        clean = str(text).strip()
+        if clean.startswith("●"):
+            clean = clean[1:].lstrip()
+        self._connection_status.setText(clean)
+        for widget in (self._connection_status, self._connection_dot):
+            widget.setProperty("state", state)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
 
     def _navigation_icon(self, title: str):
         style = self.style()
-        if "词典" in title:
+        if "工作台" in title:
+            icon = QStyle.StandardPixmap.SP_FileDialogListView
+        elif "词典" in title:
             icon = QStyle.StandardPixmap.SP_DirOpenIcon
+        elif "维护" in title:
+            icon = QStyle.StandardPixmap.SP_ComputerIcon
+        elif "输入" in title:
+            return self._keyboard_icon()
+        elif "外观" in title:
+            icon = QStyle.StandardPixmap.SP_DesktopIcon
         elif "符号" in title:
             icon = QStyle.StandardPixmap.SP_FileDialogContentsView
         elif "设置" in title:
@@ -122,6 +147,20 @@ class NavigationShell(QWidget):
         else:
             icon = QStyle.StandardPixmap.SP_FileIcon
         return style.standardIcon(icon)
+
+    def _keyboard_icon(self) -> QIcon:
+        pixmap = QPixmap(20, 20)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = self.palette().color(self.foregroundRole())
+        painter.setPen(QPen(color, 1.5))
+        painter.drawRoundedRect(2, 5, 16, 10, 2, 2)
+        for x in (5, 8, 11, 14):
+            painter.drawPoint(x, 8)
+        painter.drawLine(5, 12, 15, 12)
+        painter.end()
+        return QIcon(pixmap)
 
     def _sync_current_index(self, index: int) -> None:
         if self._sidebar.currentRow() != index:

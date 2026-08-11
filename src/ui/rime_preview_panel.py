@@ -59,6 +59,9 @@ class RimePreviewPanel(QWidget):
             candidate = QLabel("")
             candidate.setObjectName("RimePreviewCandidate")
             candidate.setTextFormat(Qt.TextFormat.RichText)
+            candidate.setAlignment(
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+            )
             candidate.setFixedWidth(105)
             candidate.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             weight = QLabel("")

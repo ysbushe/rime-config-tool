@@ -17,6 +17,8 @@ dist/
 
 # Runtime files
 *.log
+/Temp/
+/backups/
 
 # IDE and local agent metadata
 .vscode/

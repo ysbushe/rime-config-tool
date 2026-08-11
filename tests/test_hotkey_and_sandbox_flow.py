@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QInputDialog
+from PySide6.QtWidgets import QInputDialog, QLabel
 
 from src.service.sandbox_service import SandboxService
 from src.ui.quick_add_dialog import QuickAddDialog
@@ -23,6 +23,15 @@ def test_quick_add_notice_for_empty_hotkey_capture(qapp) -> None:
     # 无捕获提示使用克制的信息样式（_info），而非红色错误
     assert "未捕获" in dlg._info.text()
     assert dlg._err.text() == ""
+
+
+def test_quick_add_capture_never_counts_down_or_auto_saves(qapp) -> None:
+    dlg = QuickAddDialog(prefill_text="采集词")
+
+    assert not hasattr(dlg, "_auto_close")
+    assert dlg.findChild(QLabel, "CaptureCountdown") is None
+    assert dlg.result() == dlg.DialogCode.Rejected
+    dlg.dispose()
 
 
 

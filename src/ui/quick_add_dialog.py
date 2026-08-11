@@ -79,18 +79,12 @@ class QuickAddDialog(QDialog):
         self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setFixedWidth(680)
 
-        # 5 秒倒计时自动关闭（默认关闭；保留 _tick 代码，将 _auto_close 改为
-        # True 即可恢复。待最终测试完成后再决定是否启用自动退出。）
-        self._auto_close = False
-        self._remaining = 5
-        self._timer = QTimer(self)
         self._suggestion_result_timer = QTimer(self)
-        self._suggestion_result_timer.setInterval(8)
+        self._suggestion_result_timer.setInterval(40)
         self._suggestion_result_timer.timeout.connect(self._apply_prepared_suggestions)
         self._dictionary_timer = QTimer(self)
         self._dictionary_timer.setInterval(450)
         self._dictionary_timer.timeout.connect(self._refresh_dictionary_hint)
-        self._timer.timeout.connect(self._tick)
         if prefill_text:
             self._text.setText(prefill_text)
             # A ready index lookup is small and preserves the immediate
@@ -102,12 +96,6 @@ class QuickAddDialog(QDialog):
             QTimer.singleShot(0, self._initialize_prefill)
         if notice:
             self.set_notice(notice)
-        if self._auto_close:
-            self._timer.start(1000)
-            self._tick()
-        else:
-            self._countdown.hide()
-
         # 焦点：有捕获文本 → 编码（便于校正）；无捕获 → 文本框
         if not prefill_text:
             self._text.setFocus()
@@ -130,9 +118,7 @@ class QuickAddDialog(QDialog):
         self._disposed = True
         self._suggestion_generation += 1
         self._pending_suggestion_generations.clear()
-        for timer in (
-            self._timer, self._suggestion_result_timer, self._dictionary_timer,
-        ):
+        for timer in (self._suggestion_result_timer, self._dictionary_timer):
             timer.stop()
         self._preview_panel.dispose()
     def _build_ui(self) -> None:
@@ -255,10 +241,6 @@ class QuickAddDialog(QDialog):
         self._err.setProperty("role", "error")
         layout.addWidget(self._err)
 
-        self._countdown = QLabel("")
-        self._countdown.setProperty("role", "info")
-        layout.addWidget(self._countdown)
-
         # 中文按钮：收藏 / 取消
         buttons = QDialogButtonBox()
         btn_ok = buttons.addButton("收藏", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -372,22 +354,65 @@ class QuickAddDialog(QDialog):
         self._additional_codes = [item for item in self._additional_codes if item != display]
         self._rebuild_extra_codes()
 
+    def _remove_code_at(self, index: int) -> None:
+        if 0 <= index < len(self._additional_codes):
+            self._additional_codes.pop(index)
+            self._rebuild_extra_codes()
+
+    def _edit_additional_code(self, index: int, text: str) -> None:
+        """Keep an editable extra-code row synchronized with saved values."""
+        if 0 <= index < len(self._additional_codes):
+            self._additional_codes[index] = normalize_display_code(text)
+            self._suggestion_panel.set_excluded_codes(self._additional_codes)
+
+    def _finish_additional_code_edit(self, index: int, editor: QLineEdit) -> None:
+        if not 0 <= index < len(self._additional_codes):
+            return
+        display = normalize_display_code(editor.text())
+        if not raw_code(display):
+            self._err.setText("新增编码不能为空。")
+            editor.setFocus()
+            return
+        duplicate = any(
+            raw_code(item) == raw_code(display)
+            for row, item in enumerate(self._additional_codes) if row != index
+        )
+        if duplicate:
+            self._err.setText("新增编码不能重复。")
+            editor.setFocus()
+            return
+        self._additional_codes[index] = display
+        editor.setText(display)
+        self._err.setText("")
+        self._suggestion_panel.set_excluded_codes(self._additional_codes)
+        self._refresh_dictionary_hint()
+        self._request_rime_preview()
+
     def _rebuild_extra_codes(self) -> None:
         while self._extra_code_layout.count():
             item = self._extra_code_layout.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
-        for index, display in enumerate(self._additional_codes, start=1):
+        for offset, display in enumerate(self._additional_codes):
             row = QWidget(self._extra_code_box)
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(0, 0, 0, 0)
-            label = QLabel(f"编码{index}")
+            label = QLabel(f"编码{offset + 1}")
             label.setObjectName("ExtraCodeName")
             value = QLineEdit(display)
-            value.setReadOnly(True)
+            value.setObjectName("ExtraCodeEdit")
+            value.textEdited.connect(
+                lambda text, index=offset: self._edit_additional_code(index, text)
+            )
+            value.editingFinished.connect(
+                lambda index=offset, editor=value:
+                    self._finish_additional_code_edit(index, editor)
+            )
             remove = QPushButton("删除")
             remove.setObjectName("SuggestionAdd")
-            remove.clicked.connect(lambda _=False, code=display: self._remove_code(code))
+            remove.clicked.connect(
+                lambda _=False, index=offset: self._remove_code_at(index)
+            )
             row_layout.addWidget(label)
             row_layout.addWidget(value, 1)
             row_layout.addWidget(remove)
@@ -553,17 +578,6 @@ class QuickAddDialog(QDialog):
             return self._custom_weight
         return 1
 
-    def _tick(self) -> None:
-        if self._remaining <= 0:
-            self._timer.stop()
-            if self._text.text().strip():
-                self.accept()  # 倒计时结束：保存收藏
-            else:
-                self.reject()  # 文本为空：仅关闭
-            return
-        self._countdown.setText(f"{self._remaining} 秒后自动关闭并收藏")
-        self._remaining -= 1
-
     def keyPressEvent(self, event) -> None:
         if event.key() in (Qt.Key_Return, Qt.Key_Enter):
             self._on_accept()
@@ -574,6 +588,17 @@ class QuickAddDialog(QDialog):
         if not self._text.text().strip():
             self._err.setText("文本不能为空。")
             return
+        normalized_extras = [
+            normalize_display_code(item) for item in self._additional_codes
+        ]
+        if any(not raw_code(item) for item in normalized_extras):
+            self._err.setText("新增编码不能为空。")
+            return
+        raw_extras = [raw_code(item) for item in normalized_extras]
+        if len(raw_extras) != len(set(raw_extras)):
+            self._err.setText("新增编码不能重复。")
+            return
+        self._additional_codes = normalized_extras
         self._err.setText("")
         self.accept()
 

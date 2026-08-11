@@ -38,6 +38,32 @@ def qapp():
     # 不退出，避免影响其它用例
 
 
+@pytest.fixture(autouse=True)
+def cleanup_qt_widgets():
+    """Destroy test top-levels so global repolish does not grow per test."""
+    yield
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for widget in tuple(app.topLevelWidgets()):
+        dispose = getattr(widget, "dispose", None)
+        if callable(dispose):
+            try:
+                dispose()
+            except (RuntimeError, AttributeError):
+                pass
+        try:
+            widget.hide()
+            widget.deleteLater()
+        except RuntimeError:
+            pass
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+
+
 @pytest.fixture()
 def temp_rime_dir(tmp_path) -> Path:
     """构造临时 Rime 目录，拷贝 fixtures 并重命名为真实文件名。"""
@@ -46,6 +72,12 @@ def temp_rime_dir(tmp_path) -> Path:
     shutil.copy(FIXTURES / PHRASE, d / "custom_phrase.txt")
     shutil.copy(FIXTURES / SCHEMA, d / "rime_frost.schema.yaml")
     shutil.copy(FIXTURES / SYMBOLS, d / "symbols_v.yaml")
+    (d / "default.custom.yaml").write_text(
+        "patch:\n  schema_list:\n    - schema: rime_frost\n", encoding="utf-8",
+    )
+    (d / "user.yaml").write_text(
+        "var:\n  previously_selected_schema: rime_frost\n", encoding="utf-8",
+    )
     return d
 
 
@@ -61,7 +93,9 @@ def app_context(temp_rime_dir, monkeypatch):
 
     settings.rime_dir = str(temp_rime_dir)
     settings.backup_count = 5
-    return AppContext.build(settings)
+    context = AppContext.build(settings)
+    yield context
+    context.shutdown()
 
 
 @pytest.fixture()

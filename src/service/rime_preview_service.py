@@ -82,6 +82,7 @@ class RimePreviewService:
         self._prebuilt_data_dir = ""
         self._workspace_message = ""
         self._process: subprocess.Popen | None = None
+        self._response_queue: queue.Queue[str] | None = None
         self._snapshot = PreviewSnapshot("idle")
         self._request_id = 0
         self._queued_code = ""
@@ -188,7 +189,7 @@ class RimePreviewService:
             assert process.stdin and process.stdout
             process.stdin.write(json.dumps(payload, ensure_ascii=True) + "\n")
             process.stdin.flush()
-            result = json.loads(self._read_line(process.stdout, timeout=12))
+            result = json.loads(self._read_line(timeout=12))
             if not result.get("ok"):
                 raise RuntimeError(result.get("error", "候选预览初始化失败"))
             logger.info(
@@ -232,6 +233,7 @@ class RimePreviewService:
         with self._lock:
             self._cancel_idle_close_locked()
             process, self._process = self._process, None
+            self._response_queue = None
         if process is None:
             return
         try:
@@ -261,7 +263,7 @@ class RimePreviewService:
                 assert process.stdin and process.stdout
                 process.stdin.write(json.dumps(payload, ensure_ascii=True) + "\n")
                 process.stdin.flush()
-                line = self._read_line(process.stdout, timeout=12)
+                line = self._read_line(timeout=12)
                 result = json.loads(line)
                 if not result.get("ok"):
                     raise RuntimeError(result.get("error", "候选预览不可用"))
@@ -326,6 +328,21 @@ class RimePreviewService:
                 encoding="utf-8", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
+            response_queue: queue.Queue[str] = queue.Queue()
+            self._response_queue = response_queue
+
+            def read_responses(process=self._process,
+                               destination=response_queue) -> None:
+                assert process.stdout
+                while True:
+                    line = process.stdout.readline()
+                    destination.put(line)
+                    if not line:
+                        return
+
+            threading.Thread(
+                target=read_responses, daemon=True, name="rime-preview-reader",
+            ).start()
             logger.info(
                 "Rime 候选预览子进程已启动 pid=%s elapsed_ms=%.1f",
                 self._process.pid, (time.perf_counter() - started) * 1000,
@@ -345,10 +362,10 @@ class RimePreviewService:
                     return matches[0]
         return Path()
 
-    @staticmethod
-    def _read_line(stream, timeout: float) -> str:
-        result: queue.Queue[str] = queue.Queue(maxsize=1)
-        threading.Thread(target=lambda: result.put(stream.readline()), daemon=True).start()
+    def _read_line(self, timeout: float) -> str:
+        result = self._response_queue
+        if result is None:
+            raise RuntimeError("Rime 预览引擎读取通道不可用")
         try:
             line = result.get(timeout=timeout)
         except queue.Empty as exc:

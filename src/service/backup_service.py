@@ -33,13 +33,30 @@ class BackupService:
     """为 Rime 目录下的文件提供写前备份与轮转。"""
 
     def __init__(self, rime_dir: str, keep: int = DEFAULT_BACKUP_KEEP,
-                 backup_dir: str = "") -> None:
+                 backup_dir: str = "", namespace: str = "") -> None:
         self._rime_dir = Path(rime_dir)
         self._keep = max(1, int(keep))
         self._auto_cleanup = True
         self._last_removed: list[Path] = []
         self._custom_backup_dir = Path(backup_dir) if backup_dir else None
         self._backup_dir = self._custom_backup_dir or self._default_backup_dir()
+        self._namespace = self._clean_namespace(namespace)
+
+    @staticmethod
+    def _clean_namespace(value: str) -> str:
+        return "".join(char for char in str(value or "").lower() if char.isalnum() or char in "_-")
+
+    @property
+    def namespace(self) -> str:
+        return self._namespace
+
+    @namespace.setter
+    def namespace(self, value: str) -> None:
+        self._namespace = self._clean_namespace(value)
+
+    @property
+    def scoped_backup_dir(self) -> Path:
+        return self._backup_dir / self._namespace if self._namespace else self._backup_dir
 
     # ------------------------------------------------------------------ #
     @property
@@ -102,10 +119,11 @@ class BackupService:
 
         # Keep each managed file in its own folder and retain its source name
         # in the backup file, so the backup remains recognizable if copied out.
-        target_dir = self._backup_dir / filename
+        target_dir = self.scoped_backup_dir / filename
         target_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        dest = target_dir / f"{filename}_{ts}.bak"
+        prefix = f"{self._namespace}_" if self._namespace else ""
+        dest = target_dir / f"{prefix}{filename}_{ts}.bak"
         suffix = 2
         while dest.exists():
             dest = target_dir / f"{filename}_{ts}_{suffix}.bak"
@@ -157,10 +175,20 @@ class BackupService:
         # Nested files cover both the new ``filename_YYYYMMDD_HHMMSS.bak``
         # form and all former timestamp-only names. The flat pattern preserves
         # compatibility with releases that stored backups directly at root.
-        nested = (self._backup_dir / filename).glob("*.bak")
-        legacy_flat = self._backup_dir.glob(f"{filename}.*.bak")
+        nested = (self.scoped_backup_dir / filename).glob("*.bak")
+        legacy_flat = self.scoped_backup_dir.glob(f"{filename}.*.bak")
+        # Unscoped historical backups remain visible only to the compatibility
+        # namespace.  A scheme-scoped view must never rotate another scheme's
+        # files merely because their source filenames happen to match.
+        if self._namespace:
+            prefix = f"{self._namespace}_"
+            nested_files = [path for path in nested if path.name.startswith(prefix)]
+            flat_files: list[Path] = []
+        else:
+            nested_files = list(nested)
+            flat_files = list(legacy_flat)
         return sorted(
-            [*nested, *legacy_flat],
+            [*nested_files, *flat_files],
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )

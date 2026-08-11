@@ -437,20 +437,3 @@ class LibraryHealthDialog(QDialog):
     def _view_other_row(self, index) -> None:
         if 0 <= index.row() < len(self._other_keys):
             self._view_callback(*self._other_keys[index.row()])
-
-class MaintenanceDialog(QDialog):
-    def __init__(self, title: str, lines: list[str], parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("AppDialog")
-        self.setWindowTitle(title)
-        self.resize(680, 420)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(12)
-        text = QPlainTextEdit(self)
-        text.setReadOnly(True)
-        text.setPlainText("\n".join(lines) if lines else "未发现需要处理的项目。")
-        layout.addWidget(text)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)

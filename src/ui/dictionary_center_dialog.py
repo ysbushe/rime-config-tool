@@ -72,6 +72,10 @@ class DictionaryCenterDialog(QDialog):
         self._next_cursor: dict | None = None
         self._loading_append = False
         self._results: queue.SimpleQueue = queue.SimpleQueue()
+        self._catalog_results: queue.SimpleQueue = queue.SimpleQueue()
+        self._catalog_cache: dict[tuple[str, str], list[DictionaryCatalogItem]] = {}
+        self._catalog_request_id = 0
+        self._catalog_loading = False
         self._edit_session: DictionaryEditSession | None = None
         self._rebuilding_entries = False
         self._catalog_row = -1
@@ -209,7 +213,10 @@ class DictionaryCenterDialog(QDialog):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(50)
         self._poll_timer.timeout.connect(self._poll_results)
-        self._poll_timer.start()
+        self._catalog_poll_timer = QTimer(self)
+        self._catalog_poll_timer.setInterval(40)
+        self._catalog_poll_timer.timeout.connect(self._poll_catalog_results)
+        self._pending_requests: set[int] = set()
         self._entry_table.itemSelectionChanged.connect(self._update_tune_state)
         self._refresh_catalog()
 
@@ -227,19 +234,82 @@ class DictionaryCenterDialog(QDialog):
 
     def _refresh_catalog(self) -> None:
         schema_id = str(self._scheme.currentData() or "")
-        items = self._service.catalog(schema_id)
+        cache_key = (schema_id, self._scope)
+        cached = self._catalog_cache.get(cache_key)
+        # Modal callers historically expect a ready catalog immediately.  The
+        # persistent navigation page is the performance-sensitive path: keep
+        # its first recursive dictionary scan off the GUI thread and reuse the
+        # result for later scheme switches during this session.
+        if cached is not None:
+            self._apply_catalog(schema_id, cached)
+            return
+        if not self._embedded:
+            items = self._filtered_catalog(self._service.catalog(schema_id))
+            self._catalog_cache[cache_key] = items
+            self._apply_catalog(schema_id, items)
+            return
+
+        self._catalog_request_id += 1
+        request_id = self._catalog_request_id
+        self._catalog_loading = True
+        self._catalog_table.setEnabled(False)
+        self._status.setProperty("role", "info")
+        self._status.setText("正在后台读取当前方案的词典目录…")
+        self._catalog_poll_timer.start()
+
+        def worker() -> None:
+            try:
+                items = self._filtered_catalog(self._service.catalog(schema_id))
+                self._catalog_results.put((request_id, schema_id, items, None))
+            except Exception as exc:
+                self._catalog_results.put((request_id, schema_id, [], str(exc)))
+
+        threading.Thread(
+            target=worker, name="rime-dictionary-catalog", daemon=True,
+        ).start()
+
+    def _filtered_catalog(
+            self, items: list[DictionaryCatalogItem]) -> list[DictionaryCatalogItem]:
         if self._scope == "extensions":
             items = [item for item in items if item.kind != "系统词典入口"]
+        return items
+
+    def _poll_catalog_results(self) -> None:
+        while True:
+            try:
+                request_id, schema_id, items, error = self._catalog_results.get_nowait()
+            except queue.Empty:
+                return
+            if request_id != self._catalog_request_id:
+                continue
+            self._catalog_loading = False
+            self._catalog_poll_timer.stop()
+            self._catalog_table.setEnabled(True)
+            if error:
+                self._status.setProperty("role", "error")
+                self._status.setText(f"读取词典目录失败：{error}")
+                return
+            self._catalog_cache[(schema_id, self._scope)] = items
+            self._apply_catalog(schema_id, items)
+
+    def _apply_catalog(
+            self, schema_id: str, items: list[DictionaryCatalogItem]) -> None:
         self._catalog = items
         self._catalog_row = -1
         self._selected_item = None
         self._leave_editable_mode()
         self._next_cursor = None
-        self._catalog_table.setRowCount(len(items))
-        for row, item in enumerate(items):
-            values = (item.title, item.relative_path, item.purpose, item.kind)
-            for column, value in enumerate(values):
-                self._catalog_table.setItem(row, column, QTableWidgetItem(value))
+        self._catalog_table.setUpdatesEnabled(False)
+        self._catalog_table.blockSignals(True)
+        try:
+            self._catalog_table.setRowCount(len(items))
+            for row, item in enumerate(items):
+                values = (item.title, item.relative_path, item.purpose, item.kind)
+                for column, value in enumerate(values):
+                    self._catalog_table.setItem(row, column, QTableWidgetItem(value))
+        finally:
+            self._catalog_table.blockSignals(False)
+            self._catalog_table.setUpdatesEnabled(True)
         self._entry_table.setRowCount(0)
         self._load_more.setEnabled(False)
         self._tune_button.setEnabled(False)
@@ -313,6 +383,8 @@ class DictionaryCenterDialog(QDialog):
             return
         self._request_id += 1
         request_id = self._request_id
+        self._pending_requests.add(request_id)
+        self._poll_timer.start()
         query = self._search.text()
         self._loading_append = append
         self._load_more.setEnabled(False)
@@ -352,7 +424,10 @@ class DictionaryCenterDialog(QDialog):
             try:
                 request_id, relative_path, result, error, append = self._results.get_nowait()
             except queue.Empty:
+                if not self._pending_requests:
+                    self._poll_timer.stop()
                 return
+            self._pending_requests.discard(request_id)
             if request_id != self._request_id:
                 continue
             if self._selected_item is None \
@@ -589,3 +664,6 @@ class DictionaryCenterDialog(QDialog):
             self._data_engine_client.cancel_pending(self._engine_channel)
         self._search_timer.stop()
         self._poll_timer.stop()
+        self._catalog_request_id += 1
+        self._catalog_loading = False
+        self._catalog_poll_timer.stop()

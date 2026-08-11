@@ -410,6 +410,9 @@ QLabel#BlockTitle {
 *[role="neutral"] {
     color: @NEUTRAL_TEXT@;
 }
+*[role="muted"] {
+    color: @TEXT_SECONDARY@;
+}
 
 QLabel#MutedVersion {
     color: @TEXT_MUTED@;
@@ -749,6 +752,9 @@ QLabel#NavigationStatus {
 QLabel#NavigationStatus[state="ready"] { color: @SUCCESS_TEXT@; }
 QLabel#NavigationStatus[state="warning"] { color: @WARNING_TEXT@; }
 QLabel#NavigationStatus[state="error"] { color: @ERROR_TEXT@; }
+QLabel#NavigationStatusDot[state="ready"] { color: @SUCCESS_TEXT@; }
+QLabel#NavigationStatusDot[state="warning"] { color: @WARNING_TEXT@; }
+QLabel#NavigationStatusDot[state="error"] { color: @ERROR_TEXT@; }
 
 QWidget#PageHeader {
     background: transparent;
@@ -799,6 +805,29 @@ QLabel#WorkspaceStatus {
 QLabel#WorkspaceStatus[role="warning"] { color: @WARNING_TEXT@; }
 QLabel#WorkspaceStatus[role="success"] { color: @SUCCESS_TEXT@; }
 QLabel#WorkspaceStatus[role="error"] { color: @ERROR_TEXT@; }
+
+QFrame#CandidatePreviewCanvas {
+    background-color: @BG_APP@;
+    border: 1px dashed @BORDER_STRONG@;
+    border-radius: 8px;
+}
+QFrame#CandidatePreviewCanvas[fullscreen="true"] {
+    background-color: @BG_ELEVATED@;
+    border: 2px solid @ACCENT@;
+}
+QLabel#PreviewFullscreenBadge {
+    background-color: @ACCENT@;
+    color: @ON_ACCENT@;
+    border-radius: 8px;
+    padding: 2px 8px;
+    font-weight: 600;
+}
+QFrame#CandidateAppearancePreview {
+    background-color: @BG_ELEVATED@;
+    border: 1px solid @BORDER@;
+    border-radius: 10px;
+    color: @TEXT_PRIMARY@;
+}
 
 QSplitter#LibraryWorkspace {
     background-color: @BG_SURFACE@;

@@ -37,6 +37,19 @@ def test_metadata_is_local_and_roundtrips(monkeypatch, tmp_path):
     assert reloaded.history()[0]["action"] == "新增"
 
 
+def test_metadata_history_preserves_rollback_snapshot(monkeypatch, tmp_path):
+    import src.service.library_tools as tools
+    monkeypatch.setattr(tools, "user_config_dir", lambda: tmp_path / "local")
+    backup = tmp_path / "backup.bak"
+    store = MetadataStore(tmp_path / "rime")
+    store.record("删除", "删除一条", backups={"custom_phrase.txt": str(backup)})
+    store.save()
+
+    item = MetadataStore(tmp_path / "rime").history()[0]
+
+    assert item["backups"] == {"custom_phrase.txt": str(backup)}
+
+
 def test_import_export_health_and_diff():
     entries, errors = parse_import_text("甲\tjia\t2\n坏行\n乙,yi,101")
     assert errors == ["第 2 行格式无效"]

@@ -10,7 +10,7 @@ from src.repo.phrase_repo import Phrase
 from src.service.pinyin_display_store import PinyinDisplayStore
 from src.service.pinyin_service import PinyinService
 from src.ui.quick_add_dialog import QuickAddDialog
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
 
 from src.ui.phrase_editor import PhraseEditor
 from src.ui.multi_code_editor import MultiCodeEditor
@@ -142,6 +142,20 @@ def test_quick_add_collects_extra_codes(qapp) -> None:
     assert dialog._extra_code_layout.count() == len(values["additional_codes"])
     dialog._remove_code("y'h")
     assert "y'h" not in dialog.get_values()["additional_codes"]
+
+
+def test_quick_add_extra_code_row_is_editable_and_saved(qapp) -> None:
+    dialog = QuickAddDialog(prefill_text="银行")
+    dialog._add_code("y'h")
+    editor = dialog.findChild(QLineEdit, "ExtraCodeEdit")
+
+    assert editor is not None and not editor.isReadOnly()
+    editor.setText("yin’h")
+    editor.textEdited.emit(editor.text())
+    editor.editingFinished.emit()
+
+    assert editor.text() == "yin'h"
+    assert dialog.get_values()["additional_codes"] == ["yin'h"]
 
 
 def test_quick_add_prefill_reserves_preview_and_suggestion_space(qapp) -> None:

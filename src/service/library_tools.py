@@ -56,7 +56,7 @@ class DuplicateIndex:
 
 class MetadataStore:
     """Versioned local-only metadata for notes, tags, rules and audit history."""
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self, rime_dir: str | Path) -> None:
         # Metadata stays outside the Rime user folder so tags and notes never affect deployment.
@@ -102,8 +102,15 @@ class MetadataStore:
     def set_rules(self, rules: list[dict]) -> None:
         self._data["rules"] = rules
 
-    def record(self, action: str, detail: str, entries: Iterable[str] = ()) -> None:
-        self._data["history"].append({"at": datetime.now().isoformat(timespec="seconds"), "action": action, "detail": detail, "entries": list(entries)})
+    def record(self, action: str, detail: str, entries: Iterable[str] = (),
+               backups: dict[str, str] | None = None) -> None:
+        self._data["history"].append({
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "action": action,
+            "detail": detail,
+            "entries": list(entries),
+            "backups": dict(backups or {}),
+        })
         self._data["history"] = self._data["history"][-500:]
 
     def history(self) -> list[dict]:

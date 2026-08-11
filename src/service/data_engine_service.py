@@ -7,6 +7,7 @@ import queue
 import subprocess
 import sys
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from src.service.data_engine_host import PROTOCOL_VERSION
@@ -26,6 +27,8 @@ class DataEngineClient:
         self._request_id = 0
         self._generations: dict[str, int] = {}
         self._timeout_seconds = timeout_seconds
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="data-engine")
+        self._response_queue: queue.Queue[str] | None = None
 
     def request(self, operation: str, payload: dict | None = None) -> dict:
         with self._io_lock:
@@ -56,9 +59,7 @@ class DataEngineClient:
             if current:
                 callback(result, error)
 
-        threading.Thread(
-            target=work, daemon=True, name=f"data-engine-{operation}",
-        ).start()
+        self._executor.submit(work)
         return generation
 
     def cancel_pending(self, channel: str | None = None) -> None:
@@ -74,21 +75,21 @@ class DataEngineClient:
         with self._io_lock:
             process = self._process
             self._process = None
-            if process is None:
-                return
-            try:
-                if process.poll() is None and process.stdin:
-                    self._request_id += 1
-                    process.stdin.write(json.dumps({
-                        "version": PROTOCOL_VERSION,
-                        "id": self._request_id,
-                        "operation": "shutdown",
-                        "payload": {},
-                    }) + "\n")
-                    process.stdin.flush()
-                    process.wait(timeout=1)
-            except Exception:
-                process.terminate()
+            if process is not None:
+                try:
+                    if process.poll() is None and process.stdin:
+                        self._request_id += 1
+                        process.stdin.write(json.dumps({
+                            "version": PROTOCOL_VERSION,
+                            "id": self._request_id,
+                            "operation": "shutdown",
+                            "payload": {},
+                        }) + "\n")
+                        process.stdin.flush()
+                        process.wait(timeout=1)
+                except Exception:
+                    process.terminate()
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _request_locked(self, operation: str, payload: dict, retry: bool) -> dict:
         process = self._ensure_process()
@@ -103,7 +104,7 @@ class DataEngineClient:
                 "payload": payload,
             }, ensure_ascii=True) + "\n")
             process.stdin.flush()
-            response = json.loads(self._read_line(process.stdout, self._timeout_seconds))
+            response = json.loads(self._read_line(self._timeout_seconds))
             if response.get("version") != PROTOCOL_VERSION:
                 raise DataEngineError("数据引擎返回了不兼容的协议版本")
             if response.get("id") != request_id:
@@ -141,19 +142,32 @@ class DataEngineClient:
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+        response_queue: queue.Queue[str] = queue.Queue()
+        self._response_queue = response_queue
+
+        def read_responses(process=self._process, destination=response_queue) -> None:
+            assert process.stdout
+            while True:
+                line = process.stdout.readline()
+                destination.put(line)
+                if not line:
+                    return
+
+        threading.Thread(
+            target=read_responses, daemon=True, name="data-engine-reader",
+        ).start()
         return self._process
 
     def _terminate(self) -> None:
         process, self._process = self._process, None
+        self._response_queue = None
         if process is not None and process.poll() is None:
             process.terminate()
 
-    @staticmethod
-    def _read_line(stream, timeout: float) -> str:
-        result: queue.Queue[str] = queue.Queue(maxsize=1)
-        threading.Thread(
-            target=lambda: result.put(stream.readline()), daemon=True,
-        ).start()
+    def _read_line(self, timeout: float) -> str:
+        result = self._response_queue
+        if result is None:
+            raise DataEngineError("数据引擎读取通道不可用")
         try:
             line = result.get(timeout=timeout)
         except queue.Empty as exc:

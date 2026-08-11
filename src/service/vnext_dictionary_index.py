@@ -204,7 +204,7 @@ class VNextDictionaryIndex:
                     logger.warning("VNext 索引任务结束：%s %s", state, status.get("error", ""))
                     self._set_terminal(generation, state)
                     return
-                time.sleep(0.15)
+                time.sleep(0.4)
         except Exception as exc:
             logger.warning("VNext 索引启动失败：%s", exc)
             self._set_terminal(generation, "failed")

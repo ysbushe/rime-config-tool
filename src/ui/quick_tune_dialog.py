@@ -562,7 +562,7 @@ class QuickTuneDialog(QDialog):
         self._show_preview_items(
             f"实际输入：{self._code_input.text() or '—'}",
             items,
-            "当前显示隔离 Rime 实例的候选；任一词条均可调节，"
+            "当前显示独立测试环境生成的候选；任一词条均可调节，"
             "系统项会保存为个人覆盖项。"
             + (f" {snapshot.message}" if snapshot.message else ""),
             preferred_key=self._selected_key,

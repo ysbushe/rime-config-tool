@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from src.service.wanxiang_import import (
+    DirectSchemeImportService,
     ImportExecutionError,
     PhraseFormatError,
     TARGET_FILENAME,
@@ -32,6 +33,35 @@ def _rime_dir(tmp_path: Path, source: bytes | None = None) -> Path:
         encoding="utf-8",
     )
     return rime
+
+
+def test_direct_scheme_import_supports_wanxiang_to_frost(tmp_path: Path) -> None:
+    rime = tmp_path / "Rime"
+    rime.mkdir()
+    (rime / "wanxiang_user_phrase.txt").write_text(
+        "万象新增\twanxiangxinzeng\t9\n共同\tgongtong\t1\n", encoding="utf-8",
+    )
+    (rime / "custom_phrase.txt").write_text(
+        "共同\tgongtong\t1\n", encoding="utf-8",
+    )
+    service = DirectSchemeImportService(
+        rime, tmp_path / "backups", lambda: (True, "ok"),
+        source_filename="wanxiang_user_phrase.txt",
+        target_filename="custom_phrase.txt",
+        source_name="万象拼音",
+        target_name="白霜拼音",
+    )
+
+    plan = service.plan()
+    assert plan.source_count == 2
+    assert plan.import_count == 1
+    assert plan.skipped_exact == 1
+
+    result = service.execute(plan)
+    assert result.imported == 1
+    assert "万象新增\twanxiangxinzeng\t9" in (
+        rime / "custom_phrase.txt"
+    ).read_text(encoding="utf-8")
 
 
 def test_lossless_document_preserves_apostrophe_columns_weight_bom_and_newline():
@@ -127,6 +157,29 @@ def test_plan_distinguishes_exact_duplicates_from_existing_differences(
     assert "排序变化\tpaixu\t3" not in plan.target_bytes.decode("utf-8")
 
 
+def test_plan_can_apply_per_entry_conflict_decision(tmp_path: Path) -> None:
+    rime = _rime_dir(
+        tmp_path,
+        "采用来源\tlaiyuan\t3\n保留目标\tmubiao\t4\n".encode("utf-8"),
+    )
+    (rime / TARGET_FILENAME).write_text(
+        "采用来源\tlaiyuan\t9\n保留目标\tmubiao\t8\n", encoding="utf-8"
+    )
+    service = WanxiangImportService(
+        rime, tmp_path / "backups", lambda: (True, "ok")
+    )
+
+    plan = service.plan({("采用来源", "laiyuan")})
+    rendered = plan.target_bytes.decode("utf-8")
+
+    assert len(plan.conflicts) == 2
+    assert plan.import_count == 1
+    assert plan.skipped_different == 1
+    assert "采用来源\tlaiyuan\t3" in rendered
+    assert "采用来源\tlaiyuan\t9" not in rendered
+    assert "保留目标\tmubiao\t8" in rendered
+
+
 def test_existing_non_default_wanxiang_dictionary_blocks_overwrite(tmp_path: Path):
     rime = _rime_dir(tmp_path)
     (rime / "wanxiang.custom.yaml").write_text(
@@ -217,7 +270,7 @@ def test_import_dialog_reports_counts_without_phrase_text(qapp, tmp_path: Path):
     dialog.scan()
     report = dialog._report.toPlainText()
 
-    assert dialog.windowTitle() == "把白霜词库复制到万象拼音"
+    assert dialog.windowTitle() == "跨方案导入个人词库"
     assert dialog._source_value.text() == "2"
     assert dialog._import_value.text() == "2"
     assert dialog._duplicate_value.text() == "0"
@@ -253,7 +306,7 @@ def test_import_dialog_explains_existing_weight_difference(
     dialog.scan()
 
     assert dialog._duplicate_value.text() == "1"
-    assert "保留万象词库中的现有内容" in dialog._notice.text()
+    assert "保留万象拼音词库中的现有内容" in dialog._notice.text()
     assert "同词同码但内容不同：1" in dialog._technical.toPlainText()
     assert dialog._execute_button.isEnabled()
     dialog.close()

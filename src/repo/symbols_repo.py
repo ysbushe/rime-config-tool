@@ -32,6 +32,15 @@ class SymbolsRepo:
         self._cache = cache  # 可选：CacheService，用于跳过未变化文件的重复解析
         self.load()
 
+    def reset(self, path: str, cache: object = None) -> None:
+        """Reattach to a symbols file without external constructor calls."""
+        self.path = Path(path)
+        self._cache = cache
+        self._data = {"symbols": {}}
+        self._load_error = ""
+        self.field_map = FieldMap.default_for("symbols")
+        self.load(force=True)
+
     # ------------------------------------------------------------------ #
     # 读取 / 写出
     # ------------------------------------------------------------------ #

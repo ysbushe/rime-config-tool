@@ -396,6 +396,63 @@ def test_deploy_service_blocks_real_deploy_in_sandbox(monkeypatch) -> None:
     assert calls == []
 
 
+def test_deploy_service_waits_for_stable_weasel_server(
+        monkeypatch, tmp_path) -> None:
+    import subprocess
+
+    class _Settings:
+        sandbox_mode = False
+        rime_dir = ""
+        deployer_path = ""
+
+    deployer = tmp_path / "WeaselDeployer.exe"
+    deployer.touch()
+    deployer.with_name("WeaselServer.exe").touch()
+    monkeypatch.setattr(DeployService, "_detect", lambda self: str(deployer))
+    states = iter((False, True, True, True))
+    monkeypatch.setattr(
+        DeployService, "_weasel_server_running",
+        staticmethod(lambda: next(states)),
+    )
+    monkeypatch.setattr("src.service.deploy_service.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "src.service.deploy_service.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "", ""),
+    )
+
+    ok, message = DeployService(_Settings()).deploy()
+
+    assert ok is True
+    assert "算法服务已恢复" in message
+
+
+def test_deploy_service_reports_unverifiable_server_state(
+        monkeypatch, tmp_path) -> None:
+    import subprocess
+
+    class _Settings:
+        sandbox_mode = False
+        rime_dir = ""
+        deployer_path = ""
+
+    deployer = tmp_path / "WeaselDeployer.exe"
+    deployer.touch()
+    deployer.with_name("WeaselServer.exe").touch()
+    monkeypatch.setattr(DeployService, "_detect", lambda self: str(deployer))
+    monkeypatch.setattr(
+        DeployService, "_weasel_server_running", staticmethod(lambda: None),
+    )
+    monkeypatch.setattr(
+        "src.service.deploy_service.subprocess.run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "", ""),
+    )
+
+    ok, message = DeployService(_Settings()).deploy()
+
+    assert ok is False
+    assert "无法确认算法服务状态" in message
+
+
 def test_phrase_bundle_rolls_back_all_files_when_second_replace_fails(
         qapp, temp_rime_dir, tmp_path, monkeypatch) -> None:
     from src.service.file_transaction import TransactionalFileWriter

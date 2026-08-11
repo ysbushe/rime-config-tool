@@ -179,7 +179,7 @@ def test_sandbox_disables_tray_deploy(qapp, app_context) -> None:
 
     # 避免首次自动分组弹窗干扰
     app_context.settings.auto_group_done = True
-    mw = MainWindow(app_context)
+    mw = MainWindow(app_context, background_tasks_enabled=False)
 
     app_context.settings.sandbox_mode = True
     mw._update_tray_deploy()
@@ -191,6 +191,39 @@ def test_sandbox_disables_tray_deploy(qapp, app_context) -> None:
     mw._update_tray_deploy()
     # 部署器在测试环境可能不可用，但沙盒标签必须移除
     assert "沙盒" not in mw._tray.action_deploy.text()
+    mw.dispose()
+    qapp.processEvents()
+
+
+def test_tray_manual_deploy_is_queued_without_blocking_ui(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.main_window import MainWindow
+
+    app_context.settings.auto_group_done = True
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    requests = []
+    notices = []
+    monkeypatch.setattr(
+        window._phrase_manager, "request_manual_deploy",
+        lambda: requests.append(True) or True,
+    )
+    monkeypatch.setattr(
+        window._tray, "showMessage",
+        lambda *args: notices.append(args),
+    )
+
+    window.deploy_now()
+
+    assert requests == [True]
+    assert not window._tray.action_deploy.isEnabled()
+    assert "正在" in window._tray.action_deploy.text()
+
+    window._on_manual_deployment_completed(True, "部署完成")
+
+    assert notices and "部署完成" in notices[-1]
+    assert "正在" not in window._tray.action_deploy.text()
+    window.dispose()
+    qapp.processEvents()
 
 
 def test_rime_directory_change_is_reverted_when_staged_edits_are_kept(
@@ -198,7 +231,7 @@ def test_rime_directory_change_is_reverted_when_staged_edits_are_kept(
     from src.ui.main_window import MainWindow
 
     app_context.settings.auto_group_done = True
-    window = MainWindow(app_context)
+    window = MainWindow(app_context, background_tasks_enabled=False)
     original = app_context.settings.rime_dir
     replacement = str(tmp_path / "other-rime")
     app_context.settings.rime_dir = replacement
@@ -212,7 +245,8 @@ def test_rime_directory_change_is_reverted_when_staged_edits_are_kept(
 
     assert app_context.settings.rime_dir == original
     assert rebuilds == []
-    window._tray.hide()
+    window.dispose()
+    qapp.processEvents()
 
 
 def test_main_window_title_and_status_show_index_build_progress(
@@ -228,7 +262,7 @@ def test_main_window_title_and_status_show_index_build_progress(
         "current_file": "base.dict.yaml",
         "processed_bytes": 40, "total_bytes": 100,
     }
-    window = MainWindow(app_context)
+    window = MainWindow(app_context, background_tasks_enabled=False)
 
     window._refresh_index_status()
 
@@ -237,7 +271,8 @@ def test_main_window_title_and_status_show_index_build_progress(
     assert "base.dict.yaml" in window._index_status_label.text()
     assert window.statusBar().isHidden() is False
     window._index_status_timer.stop()
-    window._tray.hide()
+    window.dispose()
+    qapp.processEvents()
 
 
 def test_result_toast_separates_phrase_and_codes(qapp) -> None:
@@ -250,6 +285,15 @@ def test_result_toast_separates_phrase_and_codes(qapp) -> None:
     assert toast._detail_text.text() == "「银行」"
     assert "yin'hang" in toast._detail_codes.text()
     assert toast._detail_codes.wordWrap() is True
+    assert toast._countdown.text() == "5 秒后关闭"
+    assert toast._timer.interval() == 1000
+
+    toast._tick()
+
+    assert toast._countdown.text() == "4 秒后关闭"
+    for _ in range(4):
+        toast._tick()
+    assert toast.isHidden()
 
 
 def test_release_ico_is_loadable() -> None:

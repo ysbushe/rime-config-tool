@@ -6,7 +6,7 @@ Profile: windows-pyside6
 ## 项目事实
 
 - 产品：面向 Windows 10/11 与小狼毫用户的 Rime 个人词库和配置维护工具。
-- 当前优先级：专注词库导入与字词快速调节；候选窗皮肤编辑暂时冻结，未经老板明确解冻不进入实现范围。
+- 当前优先级：专注词库、字词快速调节与全拼常用配置；候选窗皮肤与外观开发已再次冻结。保留当前代码和入口，但未经老板明确解冻，不再修复、扩展或重构该功能；待办统一记录在 `docs/SKIN_EDITOR_BACKLOG.md`。即使后续解冻，也只允许通过 `weasel.custom.yaml` 提供经验证的 Qt Widgets 可视化设置，不扩展到 QML 或未经适配的万象内部能力。
 - 固定技术栈：Python、PySide6、Qt 6 Widgets、QSS、PyInstaller；未经老板明确决定，不迁移 QML，也不更换主要框架。
 - 主要入口：`src/main.py`；界面在 `src/ui/`，业务服务在 `src/service/`，文件读写在 `src/repo/`，测试在 `tests/`。
 - 用户设置和日志位于 `%LOCALAPPDATA%/RimeConfig`（缺失时按现有代码回退）；受管数据主要是 Rime 目录内的词库、YAML、分组 sidecar 和拼音显示配置，备份位置遵循现有运行模式与用户设置。

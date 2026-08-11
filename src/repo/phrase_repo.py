@@ -50,6 +50,14 @@ class PhraseRepo:
         self._cache = cache  # 可选：CacheService，用于跳过未变化文件的重复解析
         self.load()
 
+    def reset(self, path: str, cache: object = None) -> None:
+        """Reattach this repository without invoking ``__init__`` externally."""
+        self.path = Path(path)
+        self._cache = cache
+        self._header = []
+        self._entries = []
+        self.load(force=True)
+
     # ------------------------------------------------------------------ #
     # 读取
     # ------------------------------------------------------------------ #
