@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import queue
+import threading
 
 from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
@@ -78,6 +80,13 @@ class QuickTuneDialog(QDialog):
         )
         self._rebuilding_table = False
         self._disposed = False
+        self._search_generation = 0
+        self._search_results: queue.SimpleQueue = queue.SimpleQueue()
+        self._code_lookup_generation = 0
+        self._code_lookup_code = ""
+        self._code_lookup_pending = ""
+        self._code_lookup_cache: list[TuneCandidate] = []
+        self._code_lookup_results: queue.SimpleQueue = queue.SimpleQueue()
 
         root = QVBoxLayout(self)
         root.setContentsMargins(18, 16, 18, 16)
@@ -221,6 +230,12 @@ class QuickTuneDialog(QDialog):
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(160)
         self._search_timer.timeout.connect(self._refresh_table)
+        self._search_result_timer = QTimer(self)
+        self._search_result_timer.setInterval(40)
+        self._search_result_timer.timeout.connect(self._apply_search_results)
+        self._code_lookup_timer = QTimer(self)
+        self._code_lookup_timer.setInterval(40)
+        self._code_lookup_timer.timeout.connect(self._apply_code_lookup_results)
         self._index_state = str(getattr(self._dictionary_index, "state", ""))
         self._index_poll = QTimer(self)
         self._index_poll.setInterval(250)
@@ -270,7 +285,38 @@ class QuickTuneDialog(QDialog):
 
     def _refresh_table(self, _text: str = "", select_key: str = "") -> None:
         keyword = self._search.text().strip().lower()
-        rows = self._search_rows(keyword)
+        index = self._dictionary_index
+        if (
+            keyword
+            and index is not None
+            and bool(getattr(index, "prefers_async_queries", False))
+        ):
+            self._search_generation += 1
+            generation = self._search_generation
+            rows = self._session.search(keyword, include_system=False)
+            self._render_search_rows(rows, select_key)
+            self._search_result_timer.start()
+            session = self._session
+            destination = self._search_results
+
+            def worker() -> None:
+                try:
+                    result = session.search(keyword)
+                except Exception:
+                    result = rows
+                destination.put((generation, keyword, select_key, result))
+
+            threading.Thread(
+                target=worker, daemon=True, name="quick-tune-dictionary-search",
+            ).start()
+            return
+        self._search_generation += 1
+        self._search_result_timer.stop()
+        self._render_search_rows(self._search_rows(keyword), select_key)
+
+    def _render_search_rows(
+        self, rows: list[tuple[TuneCandidate, int | None]], select_key: str = "",
+    ) -> None:
         self._rebuilding_table = True
         self._table.clearSelection()
         self._table.setCurrentCell(-1, -1)
@@ -294,6 +340,24 @@ class QuickTuneDialog(QDialog):
         if selected_row >= 0:
             self._table.selectRow(selected_row)
             self._table.scrollToItem(self._table.item(selected_row, 0))
+
+    def _apply_search_results(self) -> None:
+        applied = False
+        while True:
+            try:
+                generation, keyword, select_key, rows = self._search_results.get_nowait()
+            except queue.Empty:
+                break
+            if (
+                generation != self._search_generation
+                or keyword != self._search.text().strip().lower()
+                or self._disposed
+            ):
+                continue
+            self._render_search_rows(rows, select_key)
+            applied = True
+        if applied or self._disposed:
+            self._search_result_timer.stop()
 
     def _on_search_changed(self, _value: str) -> None:
         """A new exact query starts a fresh selection and preview context."""
@@ -636,7 +700,56 @@ class QuickTuneDialog(QDialog):
         return stat.st_size, stat.st_mtime_ns
 
     def _code_candidates(self, code: str) -> list[TuneCandidate]:
-        return self._session.code_candidates(code, self._candidate_limit)
+        index = self._dictionary_index
+        if index is None or not bool(getattr(index, "prefers_async_queries", False)):
+            return self._session.code_candidates(code, self._candidate_limit)
+        local = self._session.code_candidates(
+            code, self._candidate_limit, include_system=False,
+        )
+        if self._code_lookup_code == code:
+            return self._code_lookup_cache
+        if self._code_lookup_pending != code:
+            self._code_lookup_generation += 1
+            generation = self._code_lookup_generation
+            self._code_lookup_pending = code
+            self._code_lookup_timer.start()
+            session = self._session
+            destination = self._code_lookup_results
+            limit = self._candidate_limit
+
+            def worker() -> None:
+                try:
+                    result = session.code_candidates(code, limit)
+                except Exception:
+                    result = local
+                destination.put((generation, code, result))
+
+            threading.Thread(
+                target=worker, daemon=True, name="quick-tune-code-lookup",
+            ).start()
+        return local
+
+    def _apply_code_lookup_results(self) -> None:
+        applied = False
+        while True:
+            try:
+                generation, code, items = self._code_lookup_results.get_nowait()
+            except queue.Empty:
+                break
+            if (
+                generation != self._code_lookup_generation
+                or code != self._active_code
+                or self._disposed
+            ):
+                continue
+            self._code_lookup_pending = ""
+            self._code_lookup_code = code
+            self._code_lookup_cache = items
+            applied = True
+        if applied or self._disposed:
+            self._code_lookup_timer.stop()
+        if applied:
+            self._refresh_engine_preview()
 
     def _phrase_for_key(self, key: str) -> Phrase | None:
         text, separator, code = key.partition("\t")
@@ -650,7 +763,11 @@ class QuickTuneDialog(QDialog):
         if self._disposed:
             return
         self._disposed = True
+        self._search_generation += 1
+        self._code_lookup_generation += 1
         self._search_timer.stop()
+        self._search_result_timer.stop()
+        self._code_lookup_timer.stop()
         self._request_timer.stop()
         self._index_poll.stop()
         if self._preview_service is not None and hasattr(

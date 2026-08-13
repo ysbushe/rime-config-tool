@@ -189,17 +189,24 @@ class WanxiangUpdateService:
                 report.current_version, report.new_version, files,
                 force=force, archive=archive,
             )
-            changes = [
-                FileChange(self.root / relative, payload,
-                           capture_revision(self.root / relative))
-                for relative, payload in files.items()
-            ]
-            self.writer.commit(changes)
+            changes = []
+            for relative, payload in files.items():
+                target = self.root / relative
+                try:
+                    unchanged = target.is_file() and target.read_bytes() == payload
+                except OSError:
+                    unchanged = False
+                if unchanged:
+                    continue
+                changes.append(FileChange(target, payload, capture_revision(target)))
+            if changes:
+                self.writer.commit(changes)
             self._save_manifest(report.new_version, files, layout, archive, adopt=False)
             mode = "强制" if force else "安全"
             return True, (
                 f"万象已{mode}更新至 {report.new_version}；"
-                "个人词库和自定义配置未改动，正在等待重新部署验证。"
+                f"实际写入 {len(changes)} 个变更文件，个人词库和自定义配置未改动；"
+                "正在等待重新部署。"
             )
         except Exception as exc:
             return False, f"万象更新预检或写入失败：{exc}"
@@ -228,6 +235,24 @@ class WanxiangUpdateService:
             return True, "已保留本次更新前的独立恢复备份。"
         except Exception as exc:
             return False, f"万象更新备份轮换失败：{exc}"
+
+    def validate_deployment(self) -> tuple[bool, str]:
+        """Check the concrete Wanxiang build artifacts produced by Weasel."""
+        required = (
+            self.root / "build" / "default.yaml",
+            self.root / "build" / "wanxiang.schema.yaml",
+            self.root / "build" / "wanxiang.table.bin",
+        )
+        missing = []
+        for path in required:
+            try:
+                if not path.is_file() or path.stat().st_size <= 0:
+                    missing.append(path.name)
+            except OSError:
+                missing.append(path.name)
+        if missing:
+            return False, "未生成完整的万象构建产物：" + "、".join(missing)
+        return True, "已生成万象方案与词典构建产物。"
 
     def has_recovery_backup(self) -> bool:
         try:

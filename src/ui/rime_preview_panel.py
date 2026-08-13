@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from html import escape
+import queue
+import threading
 
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
@@ -29,6 +31,11 @@ class RimePreviewPanel(QWidget):
         # Cache the active code's managed weights instead of scanning the whole library each time.
         self._managed_code = ""
         self._managed_weights: dict[str, int] = {}
+        self._indexed_code = ""
+        self._indexed_candidates: dict[str, object] = {}
+        self._dictionary_pending_code = ""
+        self._dictionary_generation = 0
+        self._dictionary_results: queue.SimpleQueue = queue.SimpleQueue()
 
         self._status = QLabel("")
         self._status.setObjectName("RimePreviewStatus")
@@ -100,6 +107,9 @@ class RimePreviewPanel(QWidget):
         self._request_timer.setSingleShot(True)
         self._request_timer.setInterval(120)
         self._request_timer.timeout.connect(self._begin_request)
+        self._dictionary_result_timer = QTimer(self)
+        self._dictionary_result_timer.setInterval(40)
+        self._dictionary_result_timer.timeout.connect(self._apply_dictionary_results)
         self._has_requested = False
         self._disposed = False
         if self._service is not None and hasattr(self._service, "events"):
@@ -111,6 +121,10 @@ class RimePreviewPanel(QWidget):
         if next_code != self._code:
             self._managed_code = ""
             self._managed_weights = {}
+            self._indexed_code = ""
+            self._indexed_candidates = {}
+            self._dictionary_pending_code = ""
+            self._dictionary_generation += 1
         self._code = next_code
         if self._service is None or not self._code:
             self._request_timer.stop()
@@ -130,6 +144,8 @@ class RimePreviewPanel(QWidget):
             return
         self._disposed = True
         self._request_timer.stop()
+        self._dictionary_result_timer.stop()
+        self._dictionary_generation += 1
         if self._service is not None and hasattr(self._service, "events"):
             try:
                 self._service.events.changed.disconnect(self._refresh)
@@ -184,10 +200,15 @@ class RimePreviewPanel(QWidget):
         )
 
     def _show_candidates(self, candidates, workspace_message: str = "") -> None:
-        indexed = {}
-        if self._dictionary_index is not None:
-            for item in self._dictionary_index.lookup_code(self._code, limit=80):
-                indexed.setdefault(item.text, item)
+        indexed = self._indexed_candidates if self._indexed_code == self._code else {}
+        if self._dictionary_index is not None and self._indexed_code != self._code:
+            if bool(getattr(self._dictionary_index, "prefers_async_queries", False)):
+                self._queue_dictionary_lookup(self._code)
+            else:
+                items = self._dictionary_index.lookup_code(self._code, limit=80)
+                self._indexed_code = self._code
+                self._indexed_candidates = {item.text: item for item in items}
+                indexed = self._indexed_candidates
         if self._managed_code != self._code:
             managed: dict[str, int] = {}
             if self._repo is not None:
@@ -235,3 +256,42 @@ class RimePreviewPanel(QWidget):
             detail += f" {workspace_message}"
         self._details.setText(detail)
         self.show()
+
+    def _queue_dictionary_lookup(self, code: str) -> None:
+        if not code or self._dictionary_pending_code == code:
+            return
+        self._dictionary_generation += 1
+        generation = self._dictionary_generation
+        index = self._dictionary_index
+        self._dictionary_pending_code = code
+        destination = self._dictionary_results
+        self._dictionary_result_timer.start()
+
+        def worker() -> None:
+            try:
+                items = list(index.lookup_code(code, limit=80)) if index is not None else []
+            except Exception:
+                items = []
+            destination.put((generation, code, items))
+
+        threading.Thread(
+            target=worker, daemon=True, name="preview-dictionary-lookup",
+        ).start()
+
+    def _apply_dictionary_results(self) -> None:
+        applied = False
+        while True:
+            try:
+                generation, code, items = self._dictionary_results.get_nowait()
+            except queue.Empty:
+                break
+            if generation != self._dictionary_generation or code != self._code:
+                continue
+            self._dictionary_pending_code = ""
+            self._indexed_code = code
+            self._indexed_candidates = {item.text: item for item in items}
+            applied = True
+        if applied or self._disposed:
+            self._dictionary_result_timer.stop()
+        if applied:
+            self._refresh()

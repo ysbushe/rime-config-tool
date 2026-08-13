@@ -20,6 +20,7 @@ class _PatchPage(QWidget):
         self._service_provider = service_provider
         self._environment_provider = environment_provider
         self._deploy_request = deploy_request
+        self._apply_pending = False
         self._revision = None
         self._loaded_scheme_id = ""
         self._loaded = False
@@ -88,18 +89,42 @@ class _PatchPage(QWidget):
             )
             self.activate()
             return
+        self._save.setEnabled(False)
         try:
             path = self._service_provider().save_updates(
                 self.filename, self._updates(), self._revision,
             )
-            self._status.setText("设置已保存，正在应用到当前输入方案。")
             self._status.setToolTip(f"已保存：{path.name}")
             self._load()
             if self._deploy_request is not None:
-                self._deploy_request()
+                self._apply_pending = True
+                self._status.setText("设置已保存，正在应用到当前输入方案…")
+                requested = bool(self._deploy_request())
+                if not requested and self._apply_pending:
+                    self.show_deployment_result(False, "未能启动重新部署。")
+            else:
+                self._status.setText("设置已保存。")
+                self._save.setEnabled(True)
             self.saved.emit(str(path))
         except Exception as exc:
+            self._apply_pending = False
+            self._save.setEnabled(True)
             QMessageBox.warning(self, "保存失败", str(exc))
+
+    def show_deployment_result(self, ok: bool, message: str) -> None:
+        """Show the final outcome for a deployment requested by this page."""
+        if not self._apply_pending:
+            return
+        self._apply_pending = False
+        resolution = self._environment_provider()
+        same_scheme = str(resolution.schema_id or "") == self._loaded_scheme_id
+        self._save.setEnabled(bool(resolution.writable and same_scheme))
+        if ok:
+            self._status.setText("设置已保存并应用到当前输入方案。")
+            self._status.setToolTip(message)
+        else:
+            self._status.setText(f"设置已保存，但尚未应用：{message}")
+            self._status.setToolTip(message)
 
     def _load_values(self, patch: dict) -> None:
         raise NotImplementedError
@@ -207,6 +232,9 @@ class InputHabitsWidget(_PatchPage):
             self._wx_english_spacing.addItem(title, value)
         self._wx_english_count = QSpinBox(wanxiang)
         self._wx_english_count.setRange(1, 9)
+        self._wx_caps_lock_ascii = QCheckBox(
+            "Caps Lock 直接切换中英文", wanxiang,
+        )
         self._wx_tone_lookup = QCheckBox("反查时允许声调", wanxiang)
         user_dict_row, _ = _explained_control(
             self._wx_user_dict, "记住你的常用词和使用频率，让常用候选逐渐靠前。",
@@ -228,6 +256,11 @@ class InputHabitsWidget(_PatchPage):
             self._wx_english_count, "英文候选最多显示多少项；数量越少，候选窗越简洁。",
             wanxiang,
         )
+        caps_lock_row, _ = _explained_control(
+            self._wx_caps_lock_ascii,
+            "锁定大写后直接输入大写英文，无需上屏；取消锁定后立即恢复中文输入。",
+            wanxiang, control_width=260,
+        )
         tone_row, _ = _explained_control(
             self._wx_tone_lookup, "用拼音查字时可以输入声调，以缩小查找范围。",
             wanxiang, control_width=210,
@@ -237,6 +270,7 @@ class InputHabitsWidget(_PatchPage):
         wanxiang_form.addRow(context_row)
         wanxiang_form.addRow("英文空格：", spacing_row)
         wanxiang_form.addRow("英文候选数量：", count_row)
+        wanxiang_form.addRow(caps_lock_row)
         wanxiang_form.addRow(tone_row)
         wanxiang_layout.addLayout(wanxiang_form)
         self._content.addWidget(wanxiang)
@@ -302,6 +336,9 @@ class InputHabitsWidget(_PatchPage):
             max(0, self._wx_english_spacing.findData(spacing))
         )
         self._wx_english_count.setValue(int(patch.get("wanxiang_english/max_candidates", 5)))
+        self._wx_caps_lock_ascii.setChecked(
+            not bool(patch.get("ascii_composer/good_old_caps_lock", True))
+        )
         self._wx_tone_lookup.setChecked(bool(patch.get("wanxiang_lookup/enable_tone", True)))
 
     def _updates(self) -> dict:
@@ -338,6 +375,9 @@ class InputHabitsWidget(_PatchPage):
                 "translator/contextual_suggestions": self._wx_context.isChecked(),
                 "wanxiang_english/english_spacing": self._wx_english_spacing.currentData(),
                 "wanxiang_english/max_candidates": self._wx_english_count.value(),
+                "ascii_composer/good_old_caps_lock": (
+                    not self._wx_caps_lock_ascii.isChecked()
+                ),
                 "wanxiang_lookup/enable_tone": self._wx_tone_lookup.isChecked(),
             })
         return updates

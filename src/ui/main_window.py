@@ -8,6 +8,8 @@
 from __future__ import annotations
 
 import sys
+import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 import queue
@@ -45,8 +47,13 @@ from src.ui.configuration_pages import (
     InputHabitsWidget,
     LibraryMaintenanceWidget,
 )
-from src.ui.wanxiang_update_notice import WanxiangCompatibilityDialog
+from src.ui.wanxiang_update_notice import (
+    WanxiangCompatibilityDialog,
+    WanxiangUpdateConfirmationDialog,
+)
+from src.ui.wanxiang_deployment_dialog import WanxiangDeploymentDialog
 from src.service.rime_patch_service import RimePatchService
+from src.service.system_idle import system_idle_seconds
 from src.service.wanxiang_update_service import WanxiangUpdateService
 from src.utils.logger import get_logger
 
@@ -81,7 +88,8 @@ class MainWindow(QMainWindow):
         self._attached_rime_dir = context.settings.rime_dir
         self._attached_sandbox_mode = context.settings.sandbox_mode
         self._attached_scheme_id = context.active_scheme_id
-        self._base_window_title = f"RIME 配置小工具 v{__version__}"
+        testing = " · GUI测试中" if os.environ.get("RIME_CONFIG_GUI_TEST") == "1" else ""
+        self._base_window_title = f"RIME 配置小工具 v{__version__}{testing}"
         self.setWindowTitle(self._base_window_title)
         self.resize(1180, 760)
         self._build_ink_decor()
@@ -90,6 +98,17 @@ class MainWindow(QMainWindow):
 
         self._build_pages()
         self._build_index_status()
+        self._wanxiang_progress = WanxiangDeploymentDialog(self)
+        self._wanxiang_deploy_scheduled = False
+        self._wanxiang_deploy_generation = 0
+        self._wanxiang_index_wait_deadline = 0.0
+        self._deferred_index_not_before = 0.0
+        self._deferred_index_timer = QTimer(self)
+        self._deferred_index_timer.setInterval(5000)
+        self._deferred_index_timer.timeout.connect(self._try_deferred_index_refresh)
+        self._preview_warmup_timer = QTimer(self)
+        self._preview_warmup_timer.setInterval(2000)
+        self._preview_warmup_timer.timeout.connect(self._try_optional_preview_warmup)
         self._hide_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
         self._hide_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
         self._hide_shortcut.activated.connect(self.hide)
@@ -116,6 +135,7 @@ class MainWindow(QMainWindow):
             self._drain_wanxiang_background_result
         )
         self._wanxiang_background_pending_service = None
+        self._wanxiang_background_mode = ""
         if self._background_tasks_enabled:
             QTimer.singleShot(2200, self._maybe_check_wanxiang_background)
 
@@ -168,14 +188,9 @@ class MainWindow(QMainWindow):
         def worker() -> None:
             try:
                 report = service.check()
-                if (report.compatible and report.download_url
-                        and report.new_version != report.current_version
-                        and not bool(getattr(report, "requires_confirmation", False))
-                        and bool(settings.get("wanxiang_auto_update", False))):
-                    result = service.update(report)
-                    self._wanxiang_background_results.put(("update", service, report, result, None))
-                else:
-                    self._wanxiang_background_results.put(("check", service, report, None, None))
+                self._wanxiang_background_results.put(
+                    ("check", service, report, None, None)
+                )
             except Exception as exc:
                 self._wanxiang_background_results.put(("check", service, None, None, exc))
 
@@ -192,7 +207,8 @@ class MainWindow(QMainWindow):
             return
         self._wanxiang_background_poll.stop()
         if error is not None:
-            self._ctx.settings.set("wanxiang_update_state", f"检查万象更新失败：{error}")
+            label = "安装万象更新" if operation == "update" else "检查万象更新"
+            self._ctx.settings.set("wanxiang_update_state", f"{label}失败：{error}")
             return
         assert report is not None
         detail = (
@@ -206,11 +222,26 @@ class MainWindow(QMainWindow):
             self._ctx.settings.set("wanxiang_update_state", message)
             if ok:
                 self._wanxiang_background_pending_service = service
-                if not self._phrase_manager.request_manual_deploy():
+                self._wanxiang_background_mode = "update"
+                if not self._request_wanxiang_deploy(
+                    "正在重新部署并重建万象词典…"
+                ):
                     service.rollback_last_update()
                     self._wanxiang_background_pending_service = None
-                self._ctx.rebuild_repos()
-                self._reattach_repos()
+                    self._wanxiang_background_mode = ""
+            return
+        can_auto_update = bool(
+            report.compatible and report.download_url
+            and report.new_version != report.current_version
+            and not bool(getattr(report, "requires_confirmation", False))
+            and self._ctx.settings.get("wanxiang_auto_update", False)
+        )
+        if can_auto_update:
+            confirmation = WanxiangUpdateConfirmationDialog(
+                report, automatic=True, parent=self,
+            )
+            if confirmation.exec() == confirmation.DialogCode.Accepted:
+                self._start_wanxiang_background_update(service, report)
             return
         if not report.waiting_for_adapter:
             return
@@ -233,6 +264,28 @@ class MainWindow(QMainWindow):
             )
         elif result == WanxiangCompatibilityDialog.DISMISS:
             self._ctx.settings.set("wanxiang_dismissed_version", report.new_version)
+
+    def _start_wanxiang_background_update(self, service, report) -> None:
+        """Install only after the GUI-thread confirmation has been accepted."""
+        self._wanxiang_background_poll.start()
+        self._ctx.settings.set(
+            "wanxiang_update_state", "正在下载并检查更新是否可以安全安装…",
+        )
+
+        def worker() -> None:
+            try:
+                result = service.update(report)
+                self._wanxiang_background_results.put(
+                    ("update", service, report, result, None)
+                )
+            except Exception as exc:
+                self._wanxiang_background_results.put(
+                    ("update", service, report, None, exc)
+                )
+
+        threading.Thread(
+            target=worker, name="wanxiang-background-install", daemon=True,
+        ).start()
 
     def _build_index_status(self) -> None:
         """Persistent, non-modal index feedback shared by every workspace."""
@@ -749,7 +802,7 @@ class MainWindow(QMainWindow):
             self._input_widget = InputHabitsWidget(
                 self._patch_service,
                 self._current_environment,
-                self._phrase_manager.request_auto_deploy,
+                self._phrase_manager.request_manual_deploy,
                 self._tabs,
             )
             self._replace_lazy_tab(TAB_INPUT, self._input_widget, _TABS[TAB_INPUT])
@@ -768,6 +821,7 @@ class MainWindow(QMainWindow):
             data_engine_client=self._ctx.data_engine_client,
             environment_provider=self._current_environment,
             deploy_request=self._phrase_manager.request_manual_deploy,
+            wanxiang_deploy_request=self._request_wanxiang_deploy,
             wanxiang_update_service_provider=lambda: WanxiangUpdateService(
                 self._ctx.sandbox_service.active_rime_dir(),
                 self._ctx.backup_service,
@@ -780,6 +834,7 @@ class MainWindow(QMainWindow):
         widget.hotkeyComboChanged.connect(self._on_hotkey_combo_changed)
         widget.sandboxToggled.connect(self._on_sandbox_toggled)
         widget.themeChanged.connect(self._on_theme_changed)
+        widget.wanxiangFilesChanged.connect(self._refresh_after_wanxiang_files_changed)
         self._phrase_manager.manualDeploymentCompleted.connect(
             widget.handle_wanxiang_deploy_result
         )
@@ -848,14 +903,105 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ #
     # 动作
     # ------------------------------------------------------------------ #
+    def _request_wanxiang_deploy(self, phase: str = "正在重新部署并重建万象词典…") -> bool:
+        """Show disruption notice, stop indexing, then queue exactly one deployment."""
+        if self._ctx.settings.sandbox_mode or not self._ctx.deploy_service.available:
+            return False
+        self._wanxiang_deploy_generation += 1
+        generation = self._wanxiang_deploy_generation
+        self._wanxiang_index_wait_deadline = time.monotonic() + 10.0
+        self._wanxiang_deploy_scheduled = True
+        self._wanxiang_progress.start(phase)
+        self._update_tray_deploy()
+        index = self._ctx.system_dictionary_index
+        if str(getattr(index, "state", "")) == "building":
+            index.cancel_build()
+            self._wanxiang_progress.set_phase("正在暂停后台词典索引，随后重新部署…")
+        QTimer.singleShot(0, lambda: self._start_wanxiang_deploy(generation, phase))
+        return True
+
+    def _start_wanxiang_deploy(self, generation: int, phase: str) -> None:
+        if self._disposed or generation != self._wanxiang_deploy_generation:
+            return
+        index = self._ctx.system_dictionary_index
+        if (str(getattr(index, "state", "")) in {"building", "cancelling"}
+                and time.monotonic() < self._wanxiang_index_wait_deadline):
+            if str(getattr(index, "state", "")) == "building":
+                index.cancel_build()
+            QTimer.singleShot(
+                250, lambda: self._start_wanxiang_deploy(generation, phase)
+            )
+            return
+        self._wanxiang_progress.set_phase(phase)
+        accepted = self._phrase_manager.request_manual_deploy(
+            rerun_if_running=True,
+        )
+        if not accepted:
+            self._wanxiang_deploy_scheduled = False
+            self._wanxiang_progress.finish()
+            self._update_tray_deploy()
+
+    def _finish_wanxiang_deploy(self, generation: int) -> None:
+        if generation != self._wanxiang_deploy_generation:
+            return
+        self._wanxiang_deploy_scheduled = False
+        self._wanxiang_progress.finish()
+        self._update_tray_deploy()
+
+    def _refresh_after_wanxiang_files_changed(self) -> None:
+        """Reattach file repositories now and postpone the expensive index refresh."""
+        if self._disposed:
+            return
+        self._ctx.rebuild_repos(refresh_index=False)
+        self._attached_scheme_id = self._ctx.active_scheme_id
+        self._reattach_repos()
+        self._schedule_deferred_index_refresh(30.0)
+
+    def _schedule_deferred_index_refresh(self, delay_seconds: float = 0.0) -> None:
+        self._deferred_index_not_before = time.monotonic() + max(
+            0.0, float(delay_seconds),
+        )
+        if self._background_tasks_enabled:
+            self._deferred_index_timer.start()
+
+    def _try_deferred_index_refresh(self) -> None:
+        if self._disposed:
+            self._deferred_index_timer.stop()
+            return
+        if self._wanxiang_deploy_scheduled or self._wanxiang_progress.active:
+            return
+        if time.monotonic() < self._deferred_index_not_before:
+            return
+        if system_idle_seconds() < 20.0:
+            return
+        self._deferred_index_timer.stop()
+        self._ctx.system_dictionary_index.ensure_ready_async(force=True)
+        self._index_status_timer.start()
+
     def _start_optional_services(self) -> None:
         if self._disposed or not self._background_tasks_enabled:
             return
         if self._optional_services_started:
             return
         self._optional_services_started = True
-        self._ctx.system_dictionary_index.ensure_ready_async()
-        self._index_status_timer.start()
+        # Existing indexes are attached synchronously by the service and remain
+        # readable. Validation/rebuild waits for genuine system idle even on a
+        # normal launch, so startup never competes with active typing.
+        self._schedule_deferred_index_refresh()
+        # Do not start two disk-heavy services together. Preview warm-up waits
+        # until indexing has stopped and the user is no longer actively typing.
+        self._preview_warmup_timer.start()
+
+    def _try_optional_preview_warmup(self) -> None:
+        if self._disposed or not self._background_tasks_enabled:
+            self._preview_warmup_timer.stop()
+            return
+        index_state = str(getattr(self._ctx.system_dictionary_index, "state", ""))
+        if index_state in {"building", "cancelling"}:
+            return
+        if system_idle_seconds() < 5.0:
+            return
+        self._preview_warmup_timer.stop()
         self._ctx.rime_preview_service.warm_up_async()
 
     def show_main(self) -> None:
@@ -872,30 +1018,70 @@ class MainWindow(QMainWindow):
 
     def deploy_now(self) -> None:
         """Queue a manual deployment without blocking the Qt event loop."""
+        if self._wanxiang_deploy_scheduled or self._wanxiang_progress.active:
+            self._tray.showMessage(
+                "重新部署",
+                "万象更新部署正在进行，请等待当前流程结束。",
+                QSystemTrayIcon.MessageIcon.Information,
+                4000,
+            )
+            return
         if self._phrase_manager.request_manual_deploy():
             self._tray.action_deploy.setEnabled(False)
             self._tray.action_deploy.setText("正在重新部署…")
 
     def _on_manual_deployment_completed(self, ok: bool, message: str) -> None:
+        if self._input_widget is not None:
+            self._input_widget.show_deployment_result(ok, message)
         service = getattr(self, "_wanxiang_background_pending_service", None)
         if service is not None:
-            self._wanxiang_background_pending_service = None
+            mode = self._wanxiang_background_mode
             if ok:
-                _confirmed, backup_message = service.confirm_update()
-                text = "万象更新已部署并通过小狼毫验证。"
-                if backup_message:
-                    text = f"{text} {backup_message}"
+                artifacts_ok, artifacts_message = service.validate_deployment()
+                ok = artifacts_ok
+                if not artifacts_ok:
+                    message = artifacts_message
+            if ok:
+                if mode == "update":
+                    _confirmed, backup_message = service.confirm_update()
+                    text = "小狼毫服务已恢复，并已生成万象构建产物。"
+                    if backup_message:
+                        text = f"{text} {backup_message}"
+                else:
+                    text = "万象原版本已恢复并完成重新部署。"
                 self._ctx.settings.set("wanxiang_update_state", text)
+                self._wanxiang_background_pending_service = None
+                self._wanxiang_background_mode = ""
+                self._refresh_after_wanxiang_files_changed()
             else:
-                rollback_ok, rollback_message = service.rollback_last_update()
-                self._ctx.settings.set(
-                    "wanxiang_update_state",
-                    f"万象更新部署失败：{message}；{rollback_message}",
-                )
-                self._ctx.rebuild_repos()
-                self._reattach_repos()
-                if rollback_ok:
-                    self._phrase_manager.request_manual_deploy()
+                if mode == "update":
+                    rollback_ok, rollback_message = service.rollback_last_update()
+                    self._ctx.settings.set(
+                        "wanxiang_update_state",
+                        f"万象更新部署失败：{message}；{rollback_message}",
+                    )
+                    self._refresh_after_wanxiang_files_changed()
+                    if rollback_ok:
+                        self._wanxiang_background_mode = "recovery"
+                        self._request_wanxiang_deploy(
+                            "更新未能构建，正在恢复并重新部署原版本…"
+                        )
+                    else:
+                        self._wanxiang_background_pending_service = None
+                        self._wanxiang_background_mode = ""
+                else:
+                    self._ctx.settings.set(
+                        "wanxiang_update_state",
+                        f"万象恢复后的重新部署失败：{message}",
+                    )
+                    self._wanxiang_background_pending_service = None
+                    self._wanxiang_background_mode = ""
+                    self._refresh_after_wanxiang_files_changed()
+        if self._wanxiang_progress.active:
+            generation = self._wanxiang_deploy_generation
+            QTimer.singleShot(
+                0, lambda value=generation: self._finish_wanxiang_deploy(value)
+            )
         self._update_tray_deploy()
         icon = (QSystemTrayIcon.MessageIcon.Information if ok
                 else QSystemTrayIcon.MessageIcon.Warning)
@@ -906,9 +1092,12 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_tray"):
             return
         sandbox = self._ctx.settings.sandbox_mode
-        available = self._ctx.deploy_service.available and not sandbox
+        busy = self._wanxiang_deploy_scheduled or self._wanxiang_progress.active
+        available = self._ctx.deploy_service.available and not sandbox and not busy
         if sandbox:
             self._tray.action_deploy.setText("立即重新部署（沙盒禁用）")
+        elif busy:
+            self._tray.action_deploy.setText("万象正在重新部署…")
         else:
             self._tray.action_deploy.setText("立即重新部署")
         self._tray.action_deploy.setEnabled(available)
@@ -951,6 +1140,7 @@ class MainWindow(QMainWindow):
                 self._settings_widget.refresh()
             return
         self._ctx.rebuild_repos()
+        self._schedule_deferred_index_refresh()
         self._attached_scheme_id = self._ctx.active_scheme_id
         self._attached_rime_dir = new_dir
         self._reattach_repos()
@@ -968,6 +1158,7 @@ class MainWindow(QMainWindow):
         # 沙盒开关变化：重建仓储（指向副本或真实目录），保持当前页便于看见设置状态。
         current_index = self._tabs.currentIndex()
         self._ctx.rebuild_repos()
+        self._schedule_deferred_index_refresh()
         self._attached_scheme_id = self._ctx.active_scheme_id
         self._attached_sandbox_mode = enabled
         self._reattach_repos()
@@ -1028,9 +1219,9 @@ class MainWindow(QMainWindow):
             )
             return
         self._ctx.rebuild_repos()
+        self._schedule_deferred_index_refresh()
         self._attached_scheme_id = self._ctx.active_scheme_id
         self._reattach_repos()
-        self._index_status_timer.start()
         self._check_rime_dir()
 
     def _current_environment(self):
@@ -1091,6 +1282,8 @@ class MainWindow(QMainWindow):
             self._scheduled_backup_timer,
             self._wanxiang_background_poll,
             self._index_status_timer,
+            self._deferred_index_timer,
+            self._preview_warmup_timer,
         ):
             timer.stop()
         self._environment_monitor.stop()

@@ -131,6 +131,10 @@ class PhraseManager(QWidget):
         self._deploy_poll = QTimer(self)
         self._deploy_poll.setInterval(100)
         self._deploy_poll.timeout.connect(self._drain_deploy_results)
+        self._auto_deploy_timer = QTimer(self)
+        self._auto_deploy_timer.setSingleShot(True)
+        self._auto_deploy_timer.setInterval(1200)
+        self._auto_deploy_timer.timeout.connect(self._start_auto_deploy)
 
         self._build_ui()
         self.refresh_scheme_status()
@@ -1095,6 +1099,7 @@ class PhraseManager(QWidget):
             scope=scope,
             parent=self if parent is None else parent,
             data_engine_client=self._data_engine_client,
+            dictionary_index=self._system_dictionary_index,
             transaction_writer=self._transaction_writer,
             backup_service=self._backup,
             saved_callback=self._on_dictionary_file_saved,
@@ -1461,6 +1466,7 @@ class PhraseManager(QWidget):
 
     def dispose(self) -> None:
         """Stop UI polling before the owning main window is destroyed."""
+        self._auto_deploy_timer.stop()
         self._deploy_poll.stop()
 
     def _schedule_deploy(self) -> None:
@@ -1475,6 +1481,13 @@ class PhraseManager(QWidget):
                 self._rime_preview_service.mark_waiting_for_deploy()
             self._status.setText("已保存。未开启自动部署。")
             return
+        if self._rime_preview_service is not None:
+            self._rime_preview_service.mark_waiting_for_deploy()
+        self._auto_deploy_timer.start()
+        self._status.setText("已保存。正在合并连续修改，随后自动部署…")
+
+    def _start_auto_deploy(self) -> None:
+        """Deploy once after a short quiet period shared by consecutive saves."""
         if not self._deploy_coordinator.request():
             self._status.setText("已保存。部署任务正在进行。")
             self._deploy_poll.start()
@@ -1482,8 +1495,9 @@ class PhraseManager(QWidget):
         self._status.setText("已保存。正在后台部署…")
         self._deploy_poll.start()
 
-    def request_manual_deploy(self) -> bool:
+    def request_manual_deploy(self, *, rerun_if_running: bool = False) -> bool:
         """Queue a tray-requested deploy on the same serialized worker."""
+        self._auto_deploy_timer.stop()
         if self._settings.sandbox_mode:
             self.manualDeploymentCompleted.emit(False, "沙盒模式，未触发真实部署。")
             return False
@@ -1493,9 +1507,11 @@ class PhraseManager(QWidget):
             )
             return False
         self._manual_deploy_requested = True
-        started = self._deploy_coordinator.request()
+        started = self._deploy_coordinator.request(
+            rerun_if_running=rerun_if_running,
+        )
         self._status.setText(
-            "正在后台重新部署…" if started else "部署正在进行，已合并手动部署请求。"
+            "正在后台重新部署…" if started else "部署任务已在进行，请等待完成。"
         )
         self._deploy_poll.start()
         return True
@@ -1504,11 +1520,10 @@ class PhraseManager(QWidget):
         """Queue deployment for another page on the shared serialized worker."""
         if self._settings.sandbox_mode or not self._settings.auto_deploy:
             return False
-        started = self._deploy_coordinator.request()
-        self._status.setText(
-            "正在后台部署…" if started else "部署正在进行，已合并最新修改。"
-        )
-        self._deploy_poll.start()
+        if self._rime_preview_service is not None:
+            self._rime_preview_service.mark_waiting_for_deploy()
+        self._auto_deploy_timer.start()
+        self._status.setText("正在合并连续修改，随后自动部署…")
         return True
 
     def hide_legacy_tools(self) -> None:

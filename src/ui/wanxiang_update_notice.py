@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QFrame, QLabel,
-    QVBoxLayout, QWidget,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 
@@ -107,4 +107,112 @@ class WanxiangCompatibilityDialog(QDialog):
         later.clicked.connect(lambda: self.done(self.LATER))
         dismiss.clicked.connect(lambda: self.done(self.DISMISS))
         close.clicked.connect(self.accept)
+        root.addWidget(buttons)
+
+
+class WanxiangUpdateConfirmationDialog(QDialog):
+    """Final user gate before a Wanxiang package can download or write files."""
+
+    def __init__(
+        self,
+        report,
+        *,
+        force: bool = False,
+        automatic: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("AppDialog")
+        self.setWindowTitle("确认更新万象")
+        self.setMinimumWidth(560)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(12)
+
+        title = QLabel("更新期间中文输入将暂时不可用", self)
+        title.setObjectName("DialogTitle")
+        root.addWidget(title)
+
+        intro_text = (
+            "已按设置发现可自动安装的新版本，但仍需您确认后才能开始。"
+            if automatic else
+            "确认后才会下载更新包、写入官方文件并调用小狼毫重新部署。"
+        )
+        intro = QLabel(intro_text, self)
+        intro.setWordWrap(True)
+        root.addWidget(intro)
+
+        summary = QFrame(self)
+        summary.setObjectName("WanxiangStatusPanel")
+        form = QFormLayout(summary)
+        form.setContentsMargins(12, 10, 12, 10)
+        form.setSpacing(7)
+        form.addRow("当前版本：", QLabel(report.current_version or "未识别", summary))
+        form.addRow("目标版本：", QLabel(report.new_version or "未识别", summary))
+        estimate = QLabel("通常约 1～2 分钟，具体取决于词典规模和磁盘性能", summary)
+        estimate.setWordWrap(True)
+        form.addRow("预计时间：", estimate)
+        root.addWidget(summary)
+
+        reasons = QLabel(
+            "主要耗时来自：\n"
+            "• 下载并校验官方更新包\n"
+            "• 建立恢复备份并写入发生变化的官方文件\n"
+            "• 小狼毫重新部署并构建万象词典",
+            self,
+        )
+        reasons.setWordWrap(True)
+        root.addWidget(reasons)
+
+        warning = QFrame(self)
+        warning.setObjectName("WanxiangInputWarning")
+        warning_layout = QVBoxLayout(warning)
+        warning_layout.setContentsMargins(14, 12, 14, 12)
+        warning_layout.setSpacing(7)
+        warning_title = QLabel("⚠ 中文输入将暂时不可用", warning)
+        warning_title.setObjectName("WanxiangInputWarningTitle")
+        warning_layout.addWidget(warning_title)
+        warning_detail = QLabel(
+            "重新部署期间，部分待输入窗口可能短暂无响应。\n"
+            "强烈建议：请在当前暂无中文输入需求时再升级，并先保存正在编辑的内容。\n"
+            "部署完成后，工具自身索引会在系统空闲时低优先级刷新，不计入上述不可用时间。",
+            warning,
+        )
+        warning_detail.setObjectName("WanxiangInputWarningDetail")
+        warning_detail.setWordWrap(True)
+        warning_layout.addWidget(warning_detail)
+        root.addWidget(warning)
+
+        details = []
+        if force:
+            details.append(
+                "这是强制更新：会覆盖检测到本地改动的官方文件，但不会覆盖个人词库、"
+                "UserDB 或 *.custom.yaml。"
+            )
+        if bool(getattr(report, "requires_confirmation", False)):
+            details.append(
+                "此版本尚未登记为已验证版本，但结构和现有设置能力检查已经通过。"
+            )
+        if details:
+            caution = QLabel("\n".join(details), self)
+            caution.setWordWrap(True)
+            caution.setProperty("role", "warning")
+            root.addWidget(caution)
+
+        root.addStretch(1)
+        buttons = QDialogButtonBox(self)
+        self.continue_button = QPushButton("继续更新", self)
+        self.continue_button.setObjectName("Danger" if force else "Primary")
+        self.cancel_button = QPushButton("取消", self)
+        buttons.addButton(
+            self.continue_button, QDialogButtonBox.ButtonRole.AcceptRole,
+        )
+        buttons.addButton(
+            self.cancel_button, QDialogButtonBox.ButtonRole.RejectRole,
+        )
+        self.continue_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setDefault(True)
+        self.cancel_button.setFocus()
         root.addWidget(buttons)

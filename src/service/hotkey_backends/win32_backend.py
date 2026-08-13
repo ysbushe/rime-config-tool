@@ -300,10 +300,17 @@ class Win32HotkeyBackend:
 
             # f. 轮询：先等 WM_COPY 生效；未变化时按窗口类型依次尝试复制快捷键。
             #    普通程序偏向 Ctrl+C；终端类窗口优先 Ctrl+Shift+C，避免 Ctrl+C 中断。
-            attempts = self._copy_attempts_for(_hwnd_class_name(fg_hwnd), _hwnd_class_name(focus_hwnd))
+            base_attempts = self._copy_attempts_for(
+                _hwnd_class_name(fg_hwnd), _hwnd_class_name(focus_hwnd),
+            )
+            # Some Chromium and elevated windows accept the fallback copy only
+            # on a subsequent injection. Retry once while the captured target
+            # remains foreground; keep the operation bounded and never attach
+            # another process' input queue.
+            attempts = base_attempts + base_attempts
             attempt_index = 0
-            # 缩短空取词等待，同时为最后一次复制保留响应时间。
-            deadline = time.monotonic() + 0.32
+            # 为第二次复制和最后一次剪贴板响应保留有限时间。
+            deadline = time.monotonic() + 0.58
             next_attempt_at = time.monotonic() + 0.04
             capture_source = "wm_copy"
             while time.monotonic() < deadline:
@@ -332,10 +339,13 @@ class Win32HotkeyBackend:
                         break
                     attempt = attempts[attempt_index]
                     capture_source = attempt
-                    logger.info("热键取词：复制尝试=%s", attempt)
+                    logger.info(
+                        "热键取词：复制尝试=%s attempt=%s/%s",
+                        attempt, attempt_index + 1, len(attempts),
+                    )
                     self._send_copy_shortcut(attempt)
                     attempt_index += 1
-                    next_attempt_at = time.monotonic() + 0.09
+                    next_attempt_at = time.monotonic() + 0.14
                 time.sleep(0.01)
 
             text = text or ""

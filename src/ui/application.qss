@@ -399,6 +399,25 @@ QLabel#BlockTitle {
     color: @WARNING_TEXT@;
 }
 
+QFrame#WanxiangInputWarning {
+    background-color: @CONFLICT_BG@;
+    border: 2px solid @ERROR_TEXT@;
+    border-radius: 8px;
+}
+
+QLabel#WanxiangInputWarningTitle {
+    color: @ERROR_TEXT@;
+    font-family: @FONT_HEADING@;
+    font-size: 17px;
+    font-weight: bold;
+}
+
+QLabel#WanxiangInputWarningDetail {
+    color: @CONFLICT_TEXT@;
+    font-size: 15px;
+    font-weight: bold;
+}
+
 *[role="error"] {
     color: @ERROR_TEXT@;
 }

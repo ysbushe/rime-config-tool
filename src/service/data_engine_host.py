@@ -18,6 +18,7 @@ from src.service.dictionary_catalog import (
     input_code,
 )
 from src.service.pinyin_service import PinyinService
+from src.service.sharded_dictionary_index import ShardedDictionaryIndex
 
 
 PROTOCOL_VERSION = 1
@@ -32,8 +33,10 @@ class _IndexTaskManager:
         self._cancel_events: dict[str, threading.Event] = {}
         self._active_task_id: str | None = None
 
-    def start(self, payload: dict, pinyin: PinyinService) -> dict:
-        index_path = str(payload["index_path"])
+    def start(
+        self, payload: dict, pinyin: PinyinService, *, sharded: bool = False,
+    ) -> dict:
+        index_path = str(payload["index_dir"] if sharded else payload["index_path"])
         scheme_id = str(payload["scheme_id"])
         rime_dir = str(payload["rime_dir"])
         roots = _parse_roots(payload.get("roots") or [])
@@ -76,12 +79,20 @@ class _IndexTaskManager:
             with self._lock:
                 self._tasks[task_id]["status"] = "running"
             try:
-                report = CompactDictionaryIndex(index_path, scheme_id).refresh(
-                    sources,
-                    pinyin.split_pinyin_code,
-                    progress=update_progress,
-                    should_cancel=cancel_event.is_set,
-                )
+                if sharded:
+                    report = ShardedDictionaryIndex(index_path, scheme_id).refresh(
+                        sources,
+                        pinyin.split_pinyin_code,
+                        progress=update_progress,
+                        should_cancel=cancel_event.is_set,
+                    )
+                else:
+                    report = CompactDictionaryIndex(index_path, scheme_id).refresh(
+                        sources,
+                        pinyin.split_pinyin_code,
+                        progress=update_progress,
+                        should_cancel=cancel_event.is_set,
+                    )
                 report_value = asdict(report)
                 report_value["path"] = str(report.path)
                 with self._lock:
@@ -133,6 +144,7 @@ class _IndexTaskManager:
 
 def run() -> int:
     indexes: dict[tuple[str, str], CompactDictionaryIndex] = {}
+    sharded_indexes: dict[tuple[str, str], ShardedDictionaryIndex] = {}
     pinyin = PinyinService()
     tasks = _IndexTaskManager()
     for line in sys.stdin:
@@ -146,6 +158,8 @@ def run() -> int:
             payload = request.get("payload") or {}
             if operation == "shutdown":
                 tasks.cancel_active()
+                for index in sharded_indexes.values():
+                    index.close()
                 _write({"id": request_id, "ok": True, "result": {"stopped": True}})
                 return 0
             if operation in {"hello", "ping"}:
@@ -154,8 +168,31 @@ def run() -> int:
                 result = _dictionary_snapshot(str(payload.get("rime_dir", "")))
             elif operation == "dictionary_entries_page":
                 result = _dictionary_entries_page(payload)
+            elif operation == "indexed_dictionary_entries_page":
+                path = str(payload["index_path"])
+                scheme_id = str(payload["scheme_id"])
+                index = indexes.setdefault(
+                    (path, scheme_id), CompactDictionaryIndex(path, scheme_id),
+                )
+                page = index.entries_page(
+                    str(payload.get("query", "")),
+                    max(1, min(500, int(payload.get("limit", 200)))),
+                    _optional_cursor(payload.get("cursor")),
+                    payload.get("paths") or [],
+                )
+                result = {
+                    "entries": [{
+                        "text": item.text,
+                        "code": item.code,
+                        "weight": "" if item.weight is None else str(item.weight),
+                        "source_file": "",
+                    } for item in page.entries],
+                    "next_cursor": page.next_cursor,
+                }
             elif operation == "start_index_refresh":
                 result = tasks.start(payload, pinyin)
+            elif operation == "start_sharded_index_refresh":
+                result = tasks.start(payload, pinyin, sharded=True)
             elif operation == "index_task_status":
                 result = tasks.status(str(payload.get("task_id", "")))
             elif operation == "cancel_index_task":
@@ -199,11 +236,40 @@ def run() -> int:
                         "candidates": [asdict(row) for row in page.candidates],
                         "next_cursor": page.next_cursor,
                     }
+            elif operation in {
+                "sharded_lookup_text", "sharded_lookup_code",
+                "sharded_dictionary_entries_page",
+            }:
+                directory = str(payload["index_dir"])
+                scheme_id = str(payload["scheme_id"])
+                index = sharded_indexes.setdefault(
+                    (directory, scheme_id), ShardedDictionaryIndex(directory, scheme_id),
+                )
+                limit = max(1, min(500, int(payload.get("limit", 20))))
+                if operation == "sharded_lookup_text":
+                    rows = index.lookup_text(str(payload.get("query", "")), limit)
+                    result = {"candidates": [asdict(row) for row in rows]}
+                elif operation == "sharded_lookup_code":
+                    rows = index.lookup_code(
+                        str(payload.get("query", "")), limit,
+                        bool(payload.get("include_shorthand", True)),
+                        pinyin.split_pinyin_code,
+                    )
+                    result = {"candidates": [asdict(row) for row in rows]}
+                else:
+                    result = index.entries_page(
+                        payload.get("paths") or [],
+                        str(payload.get("query", "")),
+                        limit,
+                        payload.get("cursor"),
+                    )
             else:
                 raise ValueError(f"不支持的数据引擎操作：{operation}")
             _write({"id": request_id, "ok": True, "result": result})
         except Exception as exc:
             _write({"id": request_id, "ok": False, "error": str(exc)})
+    for index in sharded_indexes.values():
+        index.close()
     return 0
 
 

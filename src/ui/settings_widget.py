@@ -16,11 +16,13 @@ import queue
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtCore import QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
     QFormLayout,
     QGridLayout,
     QFrame,
@@ -50,7 +52,9 @@ from src.ui.click_activated_combo import ClickActivatedComboBox
 from src.ui.visible_checkbox import VisibleCheckBox
 from src.ui.wanxiang_update_notice import (
     WanxiangCompatibilityDialog, WanxiangStatusPanel,
+    WanxiangUpdateConfirmationDialog,
 )
+from src.ui.wanxiang_deployment_dialog import WanxiangDeploymentDialog
 from src.ui.restore_preview_dialog import RestorePreviewDialog
 from src.ui.click_activated_spin import ClickActivatedSpinBox
 from src.settings import Settings
@@ -176,6 +180,7 @@ class SettingsWidget(QWidget):
     sandboxToggled = Signal(bool)
     hotkeyComboChanged = Signal(str)
     themeChanged = Signal(str)
+    wanxiangFilesChanged = Signal()
 
     def __init__(self, settings: Settings, autostart: Autostart,
                  deploy: DeployService, schema_repo: SchemaRepo | None = None,
@@ -187,6 +192,7 @@ class SettingsWidget(QWidget):
                  data_engine_client: DataEngineClient | None = None,
                  environment_provider=None,
                  deploy_request=None,
+                 wanxiang_deploy_request=None,
                  wanxiang_update_service_provider=None,
                  background_tasks_enabled: bool = True,
                  parent: QWidget | None = None) -> None:
@@ -200,12 +206,14 @@ class SettingsWidget(QWidget):
         self._data_engine_client = data_engine_client
         self._environment_provider = environment_provider
         self._deploy_request = deploy_request
+        self._wanxiang_deploy_request = wanxiang_deploy_request or deploy_request
         self._wanxiang_update_service_provider = wanxiang_update_service_provider
         self._background_tasks_enabled = bool(background_tasks_enabled)
         self._disposed = False
         self._wanxiang_results: queue.SimpleQueue = queue.SimpleQueue()
         self._wanxiang_report = None
         self._wanxiang_deploy_pending = False
+        self._wanxiang_deploy_mode = ""
         self._wanxiang_force_available = False
         self._wanxiang_poll = QTimer(self)
         self._wanxiang_poll.setInterval(100)
@@ -237,6 +245,12 @@ class SettingsWidget(QWidget):
         self._update_poll = QTimer(self)
         self._update_poll.setInterval(100)
         self._update_poll.timeout.connect(self._drain_update_results)
+        self._wanxiang_test_progress: WanxiangDeploymentDialog | None = None
+        self._wanxiang_test_timer = QTimer(self)
+        self._wanxiang_test_timer.setSingleShot(True)
+        self._wanxiang_test_timer.timeout.connect(
+            self._finish_wanxiang_deployment_test
+        )
         self._build_ui()
         self.refresh()
         if self._background_tasks_enabled:
@@ -250,9 +264,11 @@ class SettingsWidget(QWidget):
         self._dictionary_generation += 1
         for timer in (
             self._wanxiang_poll, self._diagnostics_poll,
-            self._dictionary_poll, self._update_poll,
+            self._dictionary_poll, self._update_poll, self._wanxiang_test_timer,
         ):
             timer.stop()
+        if self._wanxiang_test_progress is not None:
+            self._wanxiang_test_progress.finish()
         if self._data_engine_client is not None:
             self._data_engine_client.cancel_pending()
 
@@ -618,6 +634,47 @@ class SettingsWidget(QWidget):
         self._btn_wanxiang_info = QPushButton("查看适配说明", group)
         self._btn_wanxiang_info.setEnabled(False)
         self._btn_wanxiang_info.clicked.connect(self._show_wanxiang_explanation)
+        self._btn_wanxiang_test = QPushButton("模拟更新确认（仅测试）", group)
+        self._btn_wanxiang_test.setVisible(
+            os.environ.get("RIME_CONFIG_GUI_TEST") == "1"
+        )
+        self._btn_wanxiang_test.setToolTip(
+            "只显示更新前确认框；不会下载、写文件或调用小狼毫。"
+        )
+        self._btn_wanxiang_test.clicked.connect(
+            self._show_wanxiang_update_test_confirmation
+        )
+        self._btn_wanxiang_deployment_test = QPushButton(
+            "模拟更新部署（冻结 10 秒）", group
+        )
+        self._btn_wanxiang_deployment_test.setToolTip(
+            "显示应用级冻结提示并在 10 秒后自动恢复；不会执行真实部署。"
+        )
+        self._btn_wanxiang_deployment_test.clicked.connect(
+            self._show_wanxiang_deployment_test
+        )
+        self._btn_quick_capture_test = QPushButton(
+            "模拟采集窗口（不写入）", group
+        )
+        self._btn_quick_capture_test.setToolTip(
+            "预填示例词并演示多编码与删除默认编码；保存结果不会写入词库。"
+        )
+        self._btn_quick_capture_test.clicked.connect(
+            self._show_quick_capture_test
+        )
+        self._wanxiang_test_tools = QWidget(group)
+        self._wanxiang_test_tools.setVisible(
+            os.environ.get("RIME_CONFIG_GUI_TEST") == "1"
+        )
+        test_row = QHBoxLayout(self._wanxiang_test_tools)
+        test_row.setContentsMargins(0, 0, 0, 0)
+        test_label = QLabel("GUI 测试：", self._wanxiang_test_tools)
+        test_label.setProperty("role", "muted")
+        test_row.addWidget(test_label)
+        test_row.addWidget(self._btn_wanxiang_test)
+        test_row.addWidget(self._btn_wanxiang_deployment_test)
+        test_row.addWidget(self._btn_quick_capture_test)
+        test_row.addStretch(1)
         row.addWidget(self._btn_wanxiang_check)
         row.addWidget(self._btn_wanxiang_update)
         row.addWidget(self._btn_wanxiang_force)
@@ -632,6 +689,7 @@ class SettingsWidget(QWidget):
         layout.addWidget(self._cb_wanxiang_check)
         layout.addWidget(self._cb_wanxiang_update)
         layout.addLayout(row)
+        layout.addWidget(self._wanxiang_test_tools)
         layout.addWidget(self._wanxiang_status)
         layout.addWidget(self._lbl_wanxiang_recovery)
         return group
@@ -641,6 +699,87 @@ class SettingsWidget(QWidget):
             QMessageBox.information(self, "万象适配说明", "请先点击“立即检查”获取当前状态。")
             return
         WanxiangCompatibilityDialog(self._wanxiang_report, self).exec()
+
+    def _show_wanxiang_update_test_confirmation(self) -> None:
+        """Open a no-side-effect confirmation preview in GUI test launches only."""
+        if os.environ.get("RIME_CONFIG_GUI_TEST") != "1":
+            return
+        current = "当前已安装版本"
+        if self._wanxiang_update_service_provider is not None:
+            try:
+                current = (
+                    self._wanxiang_update_service_provider().current_version()
+                    or current
+                )
+            except Exception:
+                pass
+        report = SimpleNamespace(
+            current_version=current,
+            new_version="模拟新版本",
+            requires_confirmation=False,
+        )
+        result = WanxiangUpdateConfirmationDialog(report, parent=self).exec()
+        if result == QDialog.DialogCode.Accepted:
+            self._lbl_wanxiang_update.setText(
+                "模拟确认已完成：未下载、未写入文件、未调用小狼毫。"
+            )
+
+    def _show_wanxiang_deployment_test(self) -> None:
+        """Exercise the real application-modal progress without side effects."""
+        if os.environ.get("RIME_CONFIG_GUI_TEST") != "1":
+            return
+        if (self._wanxiang_test_progress is not None
+                and self._wanxiang_test_progress.active):
+            return
+        self._wanxiang_test_progress = WanxiangDeploymentDialog(self.window())
+        self._wanxiang_test_progress.start(
+            "[模拟测试] 正在重新部署并重建万象词典…"
+        )
+        self._lbl_wanxiang_update.setText(
+            "正在模拟更新部署：应用将在 10 秒后自动恢复；未执行任何真实操作。"
+        )
+        self._wanxiang_test_timer.start(10_000)
+
+    def _finish_wanxiang_deployment_test(self) -> None:
+        progress = self._wanxiang_test_progress
+        if progress is None:
+            return
+        progress.finish()
+        progress.deleteLater()
+        self._wanxiang_test_progress = None
+        if not self._disposed:
+            self._lbl_wanxiang_update.setText(
+                "模拟更新部署已结束：应用已恢复，未写入文件、未调用小狼毫。"
+            )
+
+    def _show_quick_capture_test(self) -> None:
+        """Open the real capture dialog and discard the accepted result."""
+        if os.environ.get("RIME_CONFIG_GUI_TEST") != "1":
+            return
+        from src.ui.quick_add_dialog import QuickAddDialog
+
+        dialog = QuickAddDialog(
+            prefill_text="银行",
+            code_alphabet=(
+                self._schema_repo.speller_alphabet()
+                if self._schema_repo is not None else ""
+            ),
+            parent=self.window(),
+        )
+        try:
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            values = dialog.get_values()
+            main_code = values.get("display_code") or "（默认编码已删除）"
+            extras = list(values.get("additional_codes") or [])
+            extra_text = "、".join(extras) if extras else "（无）"
+            self._lbl_wanxiang_update.setText(
+                f"模拟采集结果：默认编码 {main_code}；保留编码 {extra_text}。"
+                "未写入个人词库，未触发部署。"
+            )
+        finally:
+            dialog.dispose()
+            dialog.deleteLater()
 
     def _build_backup_group(self) -> QGroupBox:
         g_backup = QGroupBox("备份与恢复")
@@ -1277,32 +1416,19 @@ class SettingsWidget(QWidget):
 
         threading.Thread(target=worker, name="wanxiang-update-check", daemon=True).start()
 
-    def _start_wanxiang_update(self, *, force: bool = False) -> None:
+    def _start_wanxiang_update(
+        self, *, force: bool = False, automatic: bool = False,
+    ) -> None:
         if self._wanxiang_report is None or self._wanxiang_update_service_provider is None:
             return
-        if force:
-            answer = QMessageBox.warning(
-                self,
-                "强制更新万象",
-                "普通更新检测到官方文件曾被本地修改。\n\n"
-                "强制更新会覆盖这些官方文件，但仍不会覆盖个人词库、UserDB 或 *.custom.yaml。"
-                "更新前会建立独立恢复备份，部署失败时自动恢复。\n\n是否继续？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
-        elif bool(getattr(self._wanxiang_report, "requires_confirmation", False)):
-            answer = QMessageBox.question(
-                self,
-                "谨慎更新万象",
-                "这个万象版本尚未登记为已验证版本，但文件结构、全拼方案和本工具使用的"
-                "设置项均已通过自动检查。\n\n更新前会建立独立恢复备份，部署失败时自动恢复。是否继续？",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
+        confirmation = WanxiangUpdateConfirmationDialog(
+            self._wanxiang_report,
+            force=force,
+            automatic=automatic,
+            parent=self,
+        )
+        if confirmation.exec() != QDialog.DialogCode.Accepted:
+            return
         self._btn_wanxiang_update.setEnabled(False)
         self._btn_wanxiang_force.setEnabled(False)
         self._lbl_wanxiang_update.setText(
@@ -1378,12 +1504,15 @@ class SettingsWidget(QWidget):
             self._settings.set("wanxiang_update_state", message)
             self._refresh_wanxiang_recovery_status()
             if ok:
-                queued = bool(self._deploy_request and self._deploy_request())
+                self._wanxiang_deploy_pending = True
+                self._wanxiang_deploy_mode = "restore"
+                queued = self._queue_wanxiang_deploy("正在部署恢复后的万象文件…")
                 if not queued and not bool(getattr(self._settings, "sandbox_mode", False)):
+                    self._wanxiang_deploy_pending = False
+                    self._wanxiang_deploy_mode = ""
                     message = f"{message} 但重新部署未能启动，请手动重新部署。"
                     self._lbl_wanxiang_update.setText(message)
                     self._settings.set("wanxiang_update_state", message)
-                self.rimeDirChanged.emit(self._settings.rime_dir)
             return
         if operation == "update":
             ok, message = result
@@ -1403,20 +1532,21 @@ class SettingsWidget(QWidget):
             if ok:
                 self._btn_wanxiang_force.setVisible(False)
                 self._wanxiang_deploy_pending = True
-                queued = bool(self._deploy_request and self._deploy_request())
+                self._wanxiang_deploy_mode = "update"
+                queued = self._queue_wanxiang_deploy("正在重新部署并重建万象词典…")
                 if not queued and not bool(getattr(self._settings, "sandbox_mode", False)):
                     rollback_ok, rollback_message = (
                         self._wanxiang_update_service_provider().rollback_last_update()
                     )
                     self._wanxiang_deploy_pending = False
+                    self._wanxiang_deploy_mode = ""
                     message = f"{message} 部署未能启动；{rollback_message}"
                     self._lbl_wanxiang_update.setText(message)
                     self._settings.set("wanxiang_update_state", message)
                     if rollback_ok:
-                        self.rimeDirChanged.emit(self._settings.rime_dir)
+                        self.wanxiangFilesChanged.emit()
                     self._refresh_wanxiang_recovery_status()
                     return
-                self.rimeDirChanged.emit(self._settings.rime_dir)
             return
         report = result
         self._wanxiang_report = report
@@ -1435,7 +1565,7 @@ class SettingsWidget(QWidget):
         self._btn_wanxiang_update.setEnabled(can_update)
         if (can_update and not bool(getattr(report, "requires_confirmation", False))
                 and bool(self._settings_get("wanxiang_auto_update", False))):
-            self._start_wanxiang_update(force=False)
+            self._start_wanxiang_update(force=False, automatic=True)
             return
         if report.waiting_for_adapter:
             if str(self._settings_get("wanxiang_dismissed_version", "")) == report.new_version:
@@ -1462,27 +1592,62 @@ class SettingsWidget(QWidget):
         """Rollback a just-installed Wanxiang update if Weasel rejects it."""
         if not self._wanxiang_deploy_pending:
             return
+        mode = self._wanxiang_deploy_mode
         self._wanxiang_deploy_pending = False
+        self._wanxiang_deploy_mode = ""
+        service = self._wanxiang_update_service_provider()
         if ok:
+            artifacts_ok, artifacts_message = service.validate_deployment()
+            ok = artifacts_ok
+            if not artifacts_ok:
+                message = artifacts_message
+        if ok and mode == "update":
             _confirmed, backup_message = (
-                self._wanxiang_update_service_provider().confirm_update()
+                service.confirm_update()
             )
-            text = "万象更新已部署并通过小狼毫验证。"
+            text = "小狼毫服务已恢复，并已生成万象构建产物。"
             if backup_message:
                 text = f"{text} {backup_message}"
             self._lbl_wanxiang_update.setText(text)
             self._settings.set("wanxiang_update_state", text)
             self._refresh_wanxiang_recovery_status()
+            self.wanxiangFilesChanged.emit()
             return
-        service = self._wanxiang_update_service_provider()
+        if ok and mode in {"restore", "recovery"}:
+            text = "万象文件已恢复，重新部署和构建产物检查均已完成。"
+            self._lbl_wanxiang_update.setText(text)
+            self._settings.set("wanxiang_update_state", text)
+            self._refresh_wanxiang_recovery_status()
+            self.wanxiangFilesChanged.emit()
+            return
+        if mode in {"restore", "recovery"}:
+            text = f"万象恢复后的重新部署失败：{message}"
+            self._lbl_wanxiang_update.setText(text)
+            self._settings.set("wanxiang_update_state", text)
+            self._refresh_wanxiang_recovery_status()
+            self.wanxiangFilesChanged.emit()
+            return
         rollback_ok, rollback_message = service.rollback_last_update()
         text = f"万象更新部署失败：{message}；{rollback_message}"
         self._lbl_wanxiang_update.setText(text)
         self._settings.set("wanxiang_update_state", text)
-        self.rimeDirChanged.emit(self._settings.rime_dir)
+        self.wanxiangFilesChanged.emit()
         self._refresh_wanxiang_recovery_status()
-        if rollback_ok and self._deploy_request is not None:
-            self._deploy_request()
+        if rollback_ok:
+            self._wanxiang_deploy_pending = True
+            self._wanxiang_deploy_mode = "recovery"
+            if not self._queue_wanxiang_deploy("更新未能构建，正在恢复并重新部署原版本…"):
+                self._wanxiang_deploy_pending = False
+                self._wanxiang_deploy_mode = ""
+
+    def _queue_wanxiang_deploy(self, phase: str) -> bool:
+        callback = self._wanxiang_deploy_request
+        if callback is None:
+            return False
+        try:
+            return bool(callback(phase))
+        except TypeError:
+            return bool(callback())
 
     def _check_update_worker(self) -> None:
         try:

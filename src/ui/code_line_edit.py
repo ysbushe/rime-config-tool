@@ -80,7 +80,14 @@ class CodeLineEdit(QLineEdit):
             event.accept()
             return
         text = event.text()
-        if text and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier):
+        # Backspace and a few other editing keys carry control characters in
+        # QKeyEvent.text().  They must remain native QLineEdit operations; only
+        # printable input belongs to the code-character policy.
+        if (
+            text
+            and text.isprintable()
+            and not (event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        ):
             accepted, rejected = sanitize_code_input(text, self._code_alphabet)
             self._report_rejected(rejected)
             if not accepted:

@@ -95,7 +95,9 @@ class EncodingSuggestionPanel(QWidget):
         self._weight_edits: dict[str, int] = {}
         self._buttons: list[EncodingSuggestionOption] = []
         self._prepared_suggestions: list[EncodingSuggestion] | None = None
-        self._conflicts_by_code: dict[str, list] = {}
+        self._conflicts_by_code: dict[str, list] = self._index_conflicts(
+            self._repo.all() if self._repo else []
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -129,7 +131,6 @@ class EncodingSuggestionPanel(QWidget):
     def set_text(self, text: str) -> None:
         self._text = (text or "").strip()
         self._prepared_suggestions = None
-        self._conflicts_by_code = self._index_conflicts(self._repo.all() if self._repo else [])
         self._rebuild_suggestions()
 
     def set_loading(self, text: str) -> None:

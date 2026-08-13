@@ -9,9 +9,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QInputDialog
+from PySide6.QtWidgets import QDialog, QInputDialog, QLabel
 
 from src.repo.symbols_repo import SymbolsRepo
 from src.service.backup_service import BackupService
@@ -172,6 +174,253 @@ def test_sandbox_disables_settings_deploy(qapp, temp_rime_dir) -> None:
     widget = SettingsWidget(_FakeSettings(sandbox_mode=True), _FakeAutostart(), _FakeDeploy())
     assert widget._btn_deploy.isEnabled() is False
     assert "沙盒" in widget._lbl_deploy.text()
+
+
+def _wanxiang_update_report():
+    return SimpleNamespace(
+        current_version="17.2.5",
+        new_version="17.2.6",
+        tool_version="test",
+        reason="已通过结构预检",
+        compatible=True,
+        download_url="https://example.test/wanxiang.zip",
+        requires_confirmation=False,
+        waiting_for_adapter=False,
+    )
+
+
+def test_wanxiang_confirmation_explains_time_and_defaults_to_cancel(qapp) -> None:
+    from src.ui.wanxiang_update_notice import WanxiangUpdateConfirmationDialog
+
+    dialog = WanxiangUpdateConfirmationDialog(_wanxiang_update_report())
+    text = "\n".join(label.text() for label in dialog.findChildren(QLabel))
+
+    assert "17.2.5" in text and "17.2.6" in text
+    assert "1～2 分钟" in text
+    assert "下载并校验" in text
+    assert "中文输入" in text
+    warning_title = dialog.findChild(QLabel, "WanxiangInputWarningTitle")
+    warning_detail = dialog.findChild(QLabel, "WanxiangInputWarningDetail")
+    assert warning_title is not None and "暂时不可用" in warning_title.text()
+    assert warning_detail is not None
+    assert "部分待输入窗口可能短暂无响应" in warning_detail.text()
+    assert "强烈建议" in warning_detail.text()
+    assert "暂无中文输入需求时再升级" in warning_detail.text()
+    qss = load_theme_qss("light")
+    assert "QFrame#WanxiangInputWarning" in qss
+    assert "QLabel#WanxiangInputWarningTitle" in qss
+    assert "font-size: 17px" in qss
+    assert dialog.cancel_button.isDefault()
+
+
+def test_wanxiang_test_entry_is_visible_only_in_gui_test_mode(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    monkeypatch.delenv("RIME_CONFIG_GUI_TEST", raising=False)
+    normal = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+        background_tasks_enabled=False,
+    )
+    assert normal._btn_wanxiang_test.isHidden()
+    assert normal._wanxiang_test_tools.isHidden()
+    normal.dispose()
+
+    monkeypatch.setenv("RIME_CONFIG_GUI_TEST", "1")
+    testing = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+        background_tasks_enabled=False,
+    )
+    assert not testing._btn_wanxiang_test.isHidden()
+    assert not testing._wanxiang_test_tools.isHidden()
+    testing.dispose()
+
+
+def test_wanxiang_test_entry_never_calls_update_or_deploy(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    calls = []
+    service = SimpleNamespace(
+        current_version=lambda: "17.2.5",
+        update=lambda *_args, **_kwargs: calls.append("update"),
+    )
+    monkeypatch.setenv("RIME_CONFIG_GUI_TEST", "1")
+    monkeypatch.setattr(
+        "src.ui.settings_widget.WanxiangUpdateConfirmationDialog.exec",
+        lambda _dialog: QDialog.DialogCode.Accepted,
+    )
+    widget = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+        deploy_request=lambda: calls.append("deploy"),
+        wanxiang_update_service_provider=lambda: service,
+        background_tasks_enabled=False,
+    )
+
+    widget._show_wanxiang_update_test_confirmation()
+
+    assert calls == []
+    assert "未下载" in widget._lbl_wanxiang_update.text()
+
+
+def test_wanxiang_deployment_simulation_is_modal_and_has_no_side_effects(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    calls = []
+    monkeypatch.setenv("RIME_CONFIG_GUI_TEST", "1")
+    widget = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+        deploy_request=lambda: calls.append("deploy"),
+        background_tasks_enabled=False,
+    )
+
+    widget._show_wanxiang_deployment_test()
+    progress = widget._wanxiang_test_progress
+
+    assert progress is not None and progress.active
+    assert progress.windowModality() == Qt.WindowModality.ApplicationModal
+    assert widget._wanxiang_test_timer.isActive()
+    assert calls == []
+
+    widget._wanxiang_test_timer.stop()
+    widget._finish_wanxiang_deployment_test()
+    assert widget._wanxiang_test_progress is None
+    assert "应用已恢复" in widget._lbl_wanxiang_update.text()
+
+
+def test_quick_capture_simulation_discards_accepted_values(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    calls = []
+
+    class FakeQuickAddDialog:
+        def __init__(self, **kwargs):
+            assert kwargs["prefill_text"] == "银行"
+
+        def exec(self):
+            return QDialog.DialogCode.Accepted
+
+        def get_values(self):
+            return {
+                "display_code": "",
+                "additional_codes": ["y'h"],
+            }
+
+        def dispose(self):
+            calls.append("disposed")
+
+        def deleteLater(self):
+            calls.append("deleted")
+
+    monkeypatch.setenv("RIME_CONFIG_GUI_TEST", "1")
+    monkeypatch.setattr(
+        "src.ui.quick_add_dialog.QuickAddDialog", FakeQuickAddDialog,
+    )
+    widget = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+        deploy_request=lambda: calls.append("deploy"),
+        background_tasks_enabled=False,
+    )
+
+    widget._show_quick_capture_test()
+
+    assert calls == ["disposed", "deleted"]
+    assert "默认编码已删除" in widget._lbl_wanxiang_update.text()
+    assert "y'h" in widget._lbl_wanxiang_update.text()
+    assert "未写入个人词库" in widget._lbl_wanxiang_update.text()
+
+
+def test_settings_cancelled_wanxiang_confirmation_never_calls_update(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    calls = []
+    service = SimpleNamespace(update=lambda *_args, **_kwargs: calls.append(True))
+    widget = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+        wanxiang_update_service_provider=lambda: service,
+        background_tasks_enabled=False,
+    )
+    widget._wanxiang_report = _wanxiang_update_report()
+    monkeypatch.setattr(
+        "src.ui.settings_widget.WanxiangUpdateConfirmationDialog.exec",
+        lambda _dialog: QDialog.DialogCode.Rejected,
+    )
+
+    widget._start_wanxiang_update()
+
+    assert calls == []
+
+
+def test_confirmed_force_update_starts_only_after_acceptance(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.settings_widget import SettingsWidget
+
+    calls = []
+    service = SimpleNamespace(
+        update=lambda _report, *, force=False: calls.append(force) or (True, "ok"),
+    )
+    widget = SettingsWidget(
+        app_context.settings, app_context.autostart,
+        app_context.deploy_service, app_context.schema_repo,
+        backup=app_context.backup_service,
+        wanxiang_update_service_provider=lambda: service,
+        background_tasks_enabled=False,
+    )
+    widget._wanxiang_report = _wanxiang_update_report()
+    monkeypatch.setattr(
+        "src.ui.settings_widget.WanxiangUpdateConfirmationDialog.exec",
+        lambda _dialog: QDialog.DialogCode.Accepted,
+    )
+
+    class ImmediateThread:
+        def __init__(self, *, target, **_kwargs):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr("src.ui.settings_widget.threading.Thread", ImmediateThread)
+
+    widget._start_wanxiang_update(force=True)
+
+    assert calls == [True]
+
+
+def test_background_auto_update_cancel_never_calls_update(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.main_window import MainWindow
+
+    calls = []
+    service = SimpleNamespace(update=lambda *_args, **_kwargs: calls.append(True))
+    app_context.settings.set("wanxiang_auto_update", True)
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    window._wanxiang_background_results.put(
+        ("check", service, _wanxiang_update_report(), None, None)
+    )
+    monkeypatch.setattr(
+        "src.ui.main_window.WanxiangUpdateConfirmationDialog.exec",
+        lambda _dialog: QDialog.DialogCode.Rejected,
+    )
+
+    window._drain_wanxiang_background_result()
+
+    assert calls == []
+    window.dispose()
 
 
 def test_sandbox_disables_tray_deploy(qapp, app_context) -> None:

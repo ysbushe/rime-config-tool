@@ -157,13 +157,15 @@ class RimePreviewService:
             self._snapshot = PreviewSnapshot("waiting_deploy", message="配置已保存，等待重新部署后刷新候选预览。")
         self.events.changed.emit()
 
-    def invalidate_after_deploy(self) -> None:
+    def invalidate_after_deploy(self, *, warm_up: bool = False) -> None:
+        """Drop stale preview state without competing with Weasel by default."""
         self.close()
         with self._lock:
             self._request_id += 1
             self._snapshot = PreviewSnapshot("stale", message="已重新部署，候选预览服务正在刷新。")
         self.events.changed.emit()
-        self.warm_up_async()
+        if warm_up:
+            self.warm_up_async()
 
     def warm_up_async(self) -> None:
         """Initialize librime in the background so the first dialog opens promptly."""
@@ -326,7 +328,11 @@ class RimePreviewService:
             self._process = subprocess.Popen(
                 args, cwd=str(Path(__file__).resolve().parents[2]), env=preview_env, text=True,
                 encoding="utf-8", stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                stderr=subprocess.DEVNULL,
+                creationflags=(
+                    getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+                ),
             )
             response_queue: queue.Queue[str] = queue.Queue()
             self._response_queue = response_queue

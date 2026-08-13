@@ -73,10 +73,14 @@ class QuickAddDialog(QDialog):
         self._prev_index = 0                        # 进入自定义前的下拉索引
         self._suppress = False                      # 防止程序化回退触发二次弹窗
         self._additional_codes: list[str] = []
+        self._default_code_deleted = False
         self._prefill_initialization_pending = bool(prefill_text)
         self._suggestion_generation = 0
         self._suggestion_results: queue.SimpleQueue = queue.SimpleQueue()
         self._pending_suggestion_generations: set[int] = set()
+        self._dictionary_generation = 0
+        self._dictionary_lookup_key: tuple[str, tuple[str, ...]] | None = None
+        self._dictionary_results: queue.SimpleQueue = queue.SimpleQueue()
         self._disposed = False
         self._build_ui()
         # 冲突区按需展开，窗口保留可缩放能力。
@@ -121,6 +125,7 @@ class QuickAddDialog(QDialog):
             return
         self._disposed = True
         self._suggestion_generation += 1
+        self._dictionary_generation += 1
         self._pending_suggestion_generations.clear()
         for timer in (self._suggestion_result_timer, self._dictionary_timer):
             timer.stop()
@@ -151,10 +156,15 @@ class QuickAddDialog(QDialog):
         self._btn_add_code = QPushButton("增加编码")
         self._btn_add_code.setMinimumWidth(82)
         self._btn_add_code.clicked.connect(self._add_current_code)
+        self._btn_remove_main_code = QPushButton("删除默认编码")
+        self._btn_remove_main_code.setEnabled(False)
+        self._btn_remove_main_code.setToolTip("先从待选编码中增加至少一项，随后可删除默认编码")
+        self._btn_remove_main_code.clicked.connect(self._remove_main_code)
         code_row = QHBoxLayout()
         code_row.addWidget(self._code, 1)
         code_row.addWidget(self._btn_separator)
         code_row.addWidget(self._btn_add_code)
+        code_row.addWidget(self._btn_remove_main_code)
         self._extra_code_box = QWidget()
         self._extra_code_layout = QVBoxLayout(self._extra_code_box)
         self._extra_code_layout.setContentsMargins(0, 4, 0, 0)
@@ -266,6 +276,7 @@ class QuickAddDialog(QDialog):
 
     def _update_code(self) -> None:
         """文本变化时异步刷新建议，避免阻塞采集窗首次显示。"""
+        self._default_code_deleted = False
         text = self._text.text().strip()
         self._update_english_output_option(text)
         self._queue_suggestion_refresh(text)
@@ -316,7 +327,7 @@ class QuickAddDialog(QDialog):
 
     def _apply_suggestions(self, text: str, suggestions, conflicts: dict[str, list]) -> None:
         self._suggestion_panel.set_prepared_suggestions(text, suggestions, conflicts)
-        if text:
+        if text and not self._default_code_deleted:
             self._code.setText(
                 suggestions[0].display_code if suggestions
                 else self._pinyin.get_full_pinyin(text)
@@ -325,6 +336,7 @@ class QuickAddDialog(QDialog):
             self._err.setText("")
         else:
             self._code.clear()
+        self._sync_main_remove_button()
         self._refresh_dictionary_hint()
         self._request_rime_preview()
 
@@ -422,14 +434,28 @@ class QuickAddDialog(QDialog):
             row_layout.addWidget(remove)
             self._extra_code_layout.addWidget(row)
         self._extra_code_box.setVisible(bool(self._additional_codes))
+        self._sync_main_remove_button()
         self._suggestion_panel.set_excluded_codes(self._additional_codes)
         self._refresh_dictionary_hint()
         self._request_rime_preview()
 
     def _set_suggested_code(self, code: str) -> None:
+        self._default_code_deleted = False
         self._code.setText(code)
         self._code.setFocus()
         self._code.setCursorPosition(len(code))
+        self._refresh_dictionary_hint()
+        self._request_rime_preview()
+
+    def _remove_main_code(self) -> None:
+        if not any(raw_code(item) for item in self._additional_codes):
+            self._err.setText("请先从待选编码中增加至少一个有效编码。")
+            return
+        self._default_code_deleted = True
+        self._code.clear()
+        self._btn_remove_main_code.setEnabled(False)
+        self._suggestion_panel.select_code("")
+        self._err.setText("")
         self._refresh_dictionary_hint()
         self._request_rime_preview()
 
@@ -442,8 +468,15 @@ class QuickAddDialog(QDialog):
             self._code.setCursorPosition(min(position, len(normalized)))
             self._code.blockSignals(False)
         self._suggestion_panel.select_code(normalized)
+        self._sync_main_remove_button()
         self._refresh_dictionary_hint()
         self._request_rime_preview()
+
+    def _sync_main_remove_button(self) -> None:
+        self._btn_remove_main_code.setEnabled(
+            bool(raw_code(self._code.text()))
+            and any(raw_code(item) for item in self._additional_codes)
+        )
 
     def _request_rime_preview(self) -> None:
         self._preview_panel.set_query(self._text.text(), self._code.text())
@@ -467,6 +500,7 @@ class QuickAddDialog(QDialog):
         self._err.setText("")
 
     def _refresh_dictionary_hint(self) -> None:
+        self._apply_dictionary_results()
         index = self._system_dictionary_index
         text = self._text.text().strip()
         codes = [self._code.text()] + list(self._additional_codes)
@@ -488,7 +522,52 @@ class QuickAddDialog(QDialog):
         if state != "ready":
             self._dictionary_hint_box.hide()
             return
-        candidates = index.lookup(text, codes)
+        if not bool(getattr(index, "prefers_async_queries", False)):
+            self._show_dictionary_candidates(index.lookup(text, codes))
+            return
+        key = (text, tuple(raw_code(code) for code in codes))
+        if key != self._dictionary_lookup_key:
+            self._queue_dictionary_lookup(key, index, text, codes)
+            self._recommended_weight = None
+            self._dictionary_hint.setText("正在查询系统词典，不影响当前收藏。")
+            self._dictionary_hint_box.show()
+            self._btn_apply_dictionary_weight.hide()
+            return
+
+    def _queue_dictionary_lookup(self, key, index, text: str, codes: list[str]) -> None:
+        self._dictionary_generation += 1
+        generation = self._dictionary_generation
+        self._dictionary_lookup_key = key
+        self._dictionary_timer.start()
+        destination = self._dictionary_results
+
+        def worker() -> None:
+            try:
+                candidates = list(index.lookup(text, codes))
+            except Exception:
+                candidates = []
+            destination.put((generation, key, candidates))
+
+        threading.Thread(
+            target=worker, daemon=True, name="quick-add-dictionary-lookup",
+        ).start()
+
+    def _apply_dictionary_results(self) -> None:
+        while True:
+            try:
+                generation, key, candidates = self._dictionary_results.get_nowait()
+            except queue.Empty:
+                return
+            if (
+                generation != self._dictionary_generation
+                or key != self._dictionary_lookup_key
+                or self._disposed
+            ):
+                continue
+            self._dictionary_timer.stop()
+            self._show_dictionary_candidates(candidates)
+
+    def _show_dictionary_candidates(self, candidates) -> None:
         if not candidates:
             self._recommended_weight = None
             self._dictionary_hint_box.hide()
@@ -606,6 +685,9 @@ class QuickAddDialog(QDialog):
         if any(not raw_code(item) for item in normalized_extras):
             self._err.setText("新增编码不能为空。")
             return
+        if not raw_code(normalized_main) and not normalized_extras:
+            self._err.setText("请至少保留一个有效编码。")
+            return
         raw_extras = [raw_code(item) for item in normalized_extras]
         if len(raw_extras) != len(set(raw_extras)):
             self._err.setText("新增编码不能重复。")
@@ -620,7 +702,8 @@ class QuickAddDialog(QDialog):
         self._initialize_prefill()
         # Tests and an immediate keyboard save can arrive before the worker result.
         # Keep saving deterministic without making normal popup display wait.
-        if self._text.text().strip() and not self._code.text().strip():
+        if (self._text.text().strip() and not self._code.text().strip()
+                and not self._additional_codes and not self._default_code_deleted):
             text = self._text.text().strip()
             self._apply_suggestions(text, build_suggestions(text, self._pinyin), {})
         stored_text, display_code = self._stored_text_and_display_code()

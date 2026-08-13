@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from PySide6.QtWidgets import QBoxLayout, QScrollArea, QTabWidget
 
@@ -139,3 +140,72 @@ def test_input_habits_supports_multiple_paging_pairs_without_ctrl(qapp, tmp_path
     assert not any("Control" in value or "Ctrl" in value for value in accepts)
     assert page.filename == "wanxiang.custom.yaml"
     assert "wanxiang_english/english_spacing" in updates
+
+
+def test_input_habits_maps_caps_lock_switch_to_direct_ascii_mode(
+    qapp, tmp_path,
+) -> None:
+    (tmp_path / "wanxiang.custom.yaml").write_text(
+        "patch:\n  ascii_composer/good_old_caps_lock: false\n",
+        encoding="utf-8",
+    )
+    service, environment = _providers(tmp_path)
+    page = InputHabitsWidget(service, environment)
+    page.activate()
+
+    assert page._wx_caps_lock_ascii.isChecked()
+    assert page._updates()["ascii_composer/good_old_caps_lock"] is False
+
+    page._wx_caps_lock_ascii.setChecked(False)
+
+    assert page._updates()["ascii_composer/good_old_caps_lock"] is True
+
+
+def test_caps_lock_ascii_setting_is_off_by_default_and_wanxiang_only(
+    qapp, tmp_path,
+) -> None:
+    service, environment = _providers(tmp_path, schema_id="rime_frost")
+    page = InputHabitsWidget(service, environment)
+    page.activate()
+
+    assert not page._wx_caps_lock_ascii.isChecked()
+    page._wx_caps_lock_ascii.setChecked(True)
+
+    assert "ascii_composer/good_old_caps_lock" not in page._updates()
+
+
+def test_input_habits_save_and_apply_waits_for_explicit_deploy_result(
+    qapp, tmp_path,
+) -> None:
+    service, environment = _providers(tmp_path)
+    deploy = MagicMock(return_value=True)
+    page = InputHabitsWidget(service, environment, deploy)
+    page.activate()
+    page._page_size.setValue(7)
+
+    page._save_changes()
+
+    deploy.assert_called_once_with()
+    assert page._apply_pending is True
+    assert page._save.isEnabled() is False
+    assert "正在应用" in page._status.text()
+
+    page.show_deployment_result(True, "部署完成，算法服务已恢复。")
+
+    assert page._apply_pending is False
+    assert page._save.isEnabled() is True
+    assert "已保存并应用" in page._status.text()
+
+
+def test_input_habits_reports_saved_but_not_applied_when_deploy_cannot_start(
+    qapp, tmp_path,
+) -> None:
+    service, environment = _providers(tmp_path)
+    page = InputHabitsWidget(service, environment, lambda: False)
+    page.activate()
+
+    page._save_changes()
+
+    assert page._apply_pending is False
+    assert page._save.isEnabled() is True
+    assert "已保存，但尚未应用" in page._status.text()

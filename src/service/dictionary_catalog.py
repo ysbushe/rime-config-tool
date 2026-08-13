@@ -375,23 +375,26 @@ class DictionaryCatalogService:
     @staticmethod
     def _import_tables(path: Path) -> Iterable[str]:
         try:
-            lines = path.read_text(encoding="utf-8-sig", errors="ignore").splitlines()
+            stream = path.open("r", encoding="utf-8-sig", errors="ignore")
         except OSError:
             return ()
         values: list[str] = []
         active = False
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("import_tables:"):
-                active = True
-                continue
-            if active and stripped.startswith("-"):
-                value = stripped[1:].split("#", 1)[0].strip().strip("\"'")
-                if value:
-                    values.append(value)
-                continue
-            if active and stripped and not stripped.startswith("#"):
-                break
+        with stream:
+            for line in stream:
+                stripped = line.strip()
+                if stripped == "...":
+                    break
+                if stripped.startswith("import_tables:"):
+                    active = True
+                    continue
+                if active and stripped.startswith("-"):
+                    value = stripped[1:].split("#", 1)[0].strip().strip("\"'")
+                    if value:
+                        values.append(value)
+                    continue
+                if active and stripped and not stripped.startswith("#"):
+                    break
         return values
 
     def _relative(self, path: Path) -> str:

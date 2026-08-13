@@ -66,6 +66,8 @@ class AppContext:
     sandbox_service: SandboxService
     system_dictionary_index: VNextDictionaryIndex
     data_engine_client: DataEngineClient
+    dictionary_query_client: DataEngineClient
+    index_engine_client: DataEngineClient
     file_transaction_writer: TransactionalFileWriter
     rime_preview_service: RimePreviewService
     metadata_store: MetadataStore
@@ -96,6 +98,8 @@ class AppContext:
         autostart = Autostart()
         hotkey = HotkeyManager()
         data_engine_client = DataEngineClient(timeout_seconds=15)
+        dictionary_query_client = DataEngineClient(timeout_seconds=5)
+        index_engine_client = DataEngineClient(timeout_seconds=15)
         file_transaction_writer = TransactionalFileWriter(
             settings_path().parent / "transactions"
         )
@@ -103,7 +107,10 @@ class AppContext:
         if recovered:
             logger.warning("已恢复 %d 个未完成的文件事务。", len(recovered))
         system_dictionary_index = VNextDictionaryIndex(
-            rime_dir, data_engine_client, settings_path().parent / "indexes",
+            rime_dir,
+            dictionary_query_client,
+            settings_path().parent / "indexes",
+            maintenance_client=index_engine_client,
         )
         rime_preview = RimePreviewService(rime_dir, deploy.deployer_path)
         metadata_store = MetadataStore(rime_dir)
@@ -142,13 +149,15 @@ class AppContext:
             sandbox_service=sandbox,
             system_dictionary_index=system_dictionary_index,
             data_engine_client=data_engine_client,
+            dictionary_query_client=dictionary_query_client,
+            index_engine_client=index_engine_client,
             file_transaction_writer=file_transaction_writer,
             rime_preview_service=rime_preview,
             metadata_store=metadata_store,
             active_scheme=active_scheme,
         )
 
-    def rebuild_repos(self) -> None:
+    def rebuild_repos(self, *, refresh_index: bool = True) -> None:
         """Rime 目录 / 沙盒模式变化后重建仓储与备份服务。"""
         rime_dir = self.sandbox_service.active_rime_dir()
         scheme_source = self.settings.rime_dir if self.settings.rime_dir else rime_dir
@@ -175,7 +184,8 @@ class AppContext:
                 rime_dir, managed, self.phrase_repo, self.group_service,
                 self.file_transaction_writer,
             )
-        self.system_dictionary_index.reset(rime_dir)
+        if refresh_index:
+            self.system_dictionary_index.reset(rime_dir)
         self.rime_preview_service.reset(rime_dir, self.deploy_service.deployer_path)
         self.metadata_store = MetadataStore(rime_dir)
 
@@ -184,6 +194,8 @@ class AppContext:
         self.hotkey_manager.unregister()
         self.rime_preview_service.close()
         self.data_engine_client.close()
+        self.dictionary_query_client.close()
+        self.index_engine_client.close()
 
     @property
     def active_scheme_id(self) -> str:

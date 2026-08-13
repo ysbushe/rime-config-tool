@@ -46,6 +46,7 @@ class DictionaryCenterDialog(QDialog):
             self, rime_dir, tune_entry: TuneCallback | None = None,
             scope: str = "all", parent=None,
             data_engine_client: DataEngineClient | None = None,
+            dictionary_index=None,
             transaction_writer: TransactionalFileWriter | None = None,
             backup_service: BackupService | None = None,
             saved_callback: SavedCallback | None = None,
@@ -60,6 +61,7 @@ class DictionaryCenterDialog(QDialog):
         self._service = DictionaryCatalogService(rime_dir)
         self._rime_dir = str(self._service.root)
         self._data_engine_client = data_engine_client
+        self._dictionary_index = dictionary_index
         self._engine_channel = f"dictionary-center-{id(self)}"
         self._tune_entry = tune_entry
         self._transaction_writer = transaction_writer
@@ -383,12 +385,39 @@ class DictionaryCenterDialog(QDialog):
             return
         self._request_id += 1
         request_id = self._request_id
+        # request_latest keeps only the newest pending request, so mirror that
+        # bounded state here instead of waiting forever for suppressed callbacks.
+        self._pending_requests.clear()
         self._pending_requests.add(request_id)
         self._poll_timer.start()
         query = self._search.text()
         self._loading_append = append
         self._load_more.setEnabled(False)
         self._status.setText("正在读取下一页…" if append else "正在读取词典…")
+
+        if self._dictionary_index is not None:
+            def deliver(result, error) -> None:
+                self._results.put((
+                    request_id, item.relative_path, result, error, append,
+                ))
+
+            generation = self._dictionary_index.request_entries_page_latest(
+                item.entry_paths,
+                query,
+                200,
+                self._next_cursor if append else None,
+                deliver,
+                channel=self._engine_channel,
+            )
+            if generation is None:
+                self._pending_requests.discard(request_id)
+                self._poll_timer.stop()
+                self._status.setText(
+                    "系统词典索引正在后台准备；完成后即可浏览，不会扫描原始大词典。"
+                )
+                self._load_more.setEnabled(False)
+                self._dictionary_index.ensure_ready_async()
+            return
 
         if self._data_engine_client is not None:
             payload = {
@@ -459,7 +488,10 @@ class DictionaryCenterDialog(QDialog):
                 values = (
                     str(entry.get("text", "")), str(entry.get("code", "")),
                     str(entry.get("weight") or "—"),
-                    str(entry.get("source_file", "")),
+                    str(entry.get("source_file") or (
+                        self._selected_item.relative_path
+                        if self._selected_item is not None else ""
+                    )),
                 )
             else:
                 values = (entry.text, entry.code, entry.weight or "—", entry.source_file)
@@ -660,8 +692,11 @@ class DictionaryCenterDialog(QDialog):
 
     def dispose(self) -> None:
         """Stop background work when a modal closes or an embedded page is replaced."""
-        if self._data_engine_client is not None:
+        if self._dictionary_index is not None:
+            self._dictionary_index.cancel_pending(self._engine_channel)
+        elif self._data_engine_client is not None:
             self._data_engine_client.cancel_pending(self._engine_channel)
+        self._pending_requests.clear()
         self._search_timer.stop()
         self._poll_timer.stop()
         self._catalog_request_id += 1

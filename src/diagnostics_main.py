@@ -1,6 +1,7 @@
 """Entry point for the on-demand input diagnostics companion."""
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -21,7 +22,8 @@ class InputDiagnosticsWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._service = InputDiagnosticsService()
-        self.setWindowTitle(f"RIME 输入诊断 v{__version__}")
+        testing = " · GUI测试中" if os.environ.get("RIME_CONFIG_GUI_TEST") == "1" else ""
+        self.setWindowTitle(f"RIME 输入诊断 v{__version__}{testing}")
         self.resize(880, 620)
         self.setCentralWidget(InputDiagnosticsWidget(self._service, self))
         theme = Settings().theme

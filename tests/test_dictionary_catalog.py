@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
+from src.service.compact_dictionary_index import (
+    CompactDictionaryIndex,
+    CompactDictionarySource,
+)
+from src.service.data_engine_service import DataEngineClient
 from src.service.dictionary_catalog import DictionaryCatalogService
 from src.service.file_transaction import TransactionalFileWriter
+from src.service.vnext_dictionary_index import VNextDictionaryIndex
 from src.ui.dictionary_center_dialog import DictionaryCenterDialog
 
 
@@ -126,6 +134,21 @@ def test_dictionary_entry_query_is_exact_not_substring(tmp_path) -> None:
     assert service.read_entries(item, query="wut") == []
 
 
+def test_import_table_discovery_streams_only_header(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "large.dict.yaml"
+    path.write_text(
+        "---\nname: large\nimport_tables:\n  - dicts/base\n...\n"
+        + ("正文\tzhengwen\t1\n" * 10000),
+        encoding="utf-8",
+    )
+
+    def forbidden_read_text(*_args, **_kwargs):
+        raise AssertionError("large dictionary must not be loaded with read_text")
+
+    monkeypatch.setattr(type(path), "read_text", forbidden_read_text)
+    assert list(DictionaryCatalogService._import_tables(path)) == ["dicts/base"]
+
+
 def test_dictionary_center_edits_personal_text_dictionary_with_explicit_save(
         qapp, tmp_path) -> None:
     _activate(tmp_path, "wanxiang")
@@ -217,3 +240,114 @@ def test_embedded_dictionary_center_loads_catalog_without_blocking_gui(
             break
     assert dialog._catalog_loading is False
     dialog.dispose()
+
+
+def test_dictionary_center_uses_ready_index_instead_of_raw_dictionary_scan(
+        qapp, tmp_path) -> None:
+    _activate(tmp_path, "wanxiang")
+    _write_dictionary(tmp_path / "wanxiang.dict.yaml", ("dicts/base",))
+    source = tmp_path / "dicts/base.dict.yaml"
+    _write_dictionary(source, rows=(("测试", "ceshi", "1"),))
+
+    class ReadyIndex:
+        def __init__(self):
+            self.requests = []
+
+        def request_entries_page_latest(
+                self, paths, query, limit, cursor, callback, *, channel):
+            self.requests.append((tuple(paths), query, limit, cursor, channel))
+            callback({
+                "entries": [{
+                    "text": "测试", "code": "ceshi", "weight": "1",
+                    "source_file": "dicts/base.dict.yaml",
+                }],
+                "next_cursor": None,
+            }, None)
+            return 1
+
+        def cancel_pending(self, _channel):
+            return None
+
+        def ensure_ready_async(self):
+            raise AssertionError("ready index should not be rebuilt")
+
+    index = ReadyIndex()
+    raw_engine = MagicMock()
+    dialog = DictionaryCenterDialog(
+        tmp_path, dictionary_index=index, data_engine_client=raw_engine,
+    )
+    row = next(
+        row for row, item in enumerate(dialog._catalog)
+        if item.relative_path == "dicts/base.dict.yaml"
+    )
+
+    dialog._catalog_table.selectRow(row)
+    dialog._poll_results()
+
+    assert index.requests
+    assert index.requests[0][0] == (source,)
+    raw_engine.request_latest.assert_not_called()
+    assert dialog._entry_table.item(0, 0).text() == "测试"
+    dialog.dispose()
+
+
+def test_dictionary_center_browses_existing_legacy_index_during_v3_migration(
+        qapp, tmp_path) -> None:
+    """The last compact generation must stay browseable while v3 is absent."""
+    from PySide6.QtTest import QTest
+
+    _activate(tmp_path, "wanxiang")
+    _write_dictionary(tmp_path / "wanxiang.dict.yaml", ("dicts/base",))
+    source = tmp_path / "dicts/base.dict.yaml"
+    rows = [("物体", "wuti", "800")]
+    rows.extend((f"测试词{index}", f"ceshici{index}", str(index)) for index in range(204))
+    _write_dictionary(source, rows=rows)
+
+    index_dir = tmp_path / "indexes"
+    CompactDictionaryIndex(
+        index_dir / "wanxiang.sqlite", "wanxiang",
+    ).build([CompactDictionarySource(source, "dicts/base.dict.yaml")])
+    client = DataEngineClient(timeout_seconds=5)
+    dictionary_index = VNextDictionaryIndex(tmp_path, client, index_dir)
+    dialog = DictionaryCenterDialog(
+        tmp_path, dictionary_index=dictionary_index,
+    )
+    try:
+        assert dictionary_index.state == "ready"
+        assert dictionary_index._storage_kind == "compact"
+        row = next(
+            row for row, item in enumerate(dialog._catalog)
+            if item.relative_path == "dicts/base.dict.yaml"
+        )
+
+        dialog._catalog_table.selectRow(row)
+        for _ in range(250):
+            QTest.qWait(20)
+            if dialog._entry_table.rowCount() == 200:
+                break
+        assert dialog._entry_table.rowCount() == 200
+        assert dialog._load_more.isEnabled()
+        assert "索引正在后台准备" not in dialog._status.text()
+
+        dialog._load_more.click()
+        for _ in range(250):
+            QTest.qWait(20)
+            if dialog._entry_table.rowCount() == 205:
+                break
+        assert dialog._entry_table.rowCount() == 205
+        assert not dialog._load_more.isEnabled()
+
+        dialog._search.setText("物体")
+        for _ in range(250):
+            QTest.qWait(20)
+            if (
+                dialog._entry_table.rowCount() == 1
+                and dialog._entry_table.item(0, 0).text() == "物体"
+            ):
+                break
+        assert dialog._entry_table.rowCount() == 1
+        assert dialog._entry_table.item(0, 1).text() == "wuti"
+        assert "索引正在后台准备" not in dialog._status.text()
+    finally:
+        dialog.dispose()
+        client.close()

@@ -29,8 +29,16 @@ class DataEngineClient:
         self._timeout_seconds = timeout_seconds
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="data-engine")
         self._response_queue: queue.Queue[str] | None = None
+        self._latest_pending: dict[
+            str, tuple[int, str, dict, Callable[[dict | None, Exception | None], None]]
+        ] = {}
+        self._latest_running: set[str] = set()
+        self._closed = False
 
     def request(self, operation: str, payload: dict | None = None) -> dict:
+        with self._lock:
+            if self._closed:
+                raise DataEngineError("数据引擎客户端已经关闭")
         with self._io_lock:
             return self._request_locked(operation, payload or {}, retry=True)
 
@@ -42,12 +50,28 @@ class DataEngineClient:
         *,
         channel: str = "default",
     ) -> int:
-        """Run asynchronously and suppress a result superseded by a newer request."""
+        """Keep at most one running and one replaceable pending request per channel."""
         with self._lock:
+            if self._closed:
+                raise DataEngineError("数据引擎客户端已经关闭")
             generation = self._generations.get(channel, 0) + 1
             self._generations[channel] = generation
+            self._latest_pending[channel] = (
+                generation, operation, dict(payload), callback,
+            )
+            if channel not in self._latest_running:
+                self._latest_running.add(channel)
+                self._executor.submit(self._drain_latest_channel, channel)
+        return generation
 
-        def work() -> None:
+    def _drain_latest_channel(self, channel: str) -> None:
+        while True:
+            with self._lock:
+                request = self._latest_pending.pop(channel, None)
+                if request is None or self._closed:
+                    self._latest_running.discard(channel)
+                    return
+            generation, operation, payload, callback = request
             result = None
             error = None
             try:
@@ -55,26 +79,42 @@ class DataEngineClient:
             except Exception as exc:  # delivered to the UI boundary
                 error = exc
             with self._lock:
-                current = generation == self._generations.get(channel)
+                current = (
+                    not self._closed
+                    and generation == self._generations.get(channel)
+                )
             if current:
-                callback(result, error)
-
-        self._executor.submit(work)
-        return generation
+                try:
+                    callback(result, error)
+                except Exception:
+                    # UI-bound callbacks must not strand the per-channel worker.
+                    pass
 
     def cancel_pending(self, channel: str | None = None) -> None:
         with self._lock:
             if channel is None:
                 for key in tuple(self._generations):
                     self._generations[key] += 1
+                self._latest_pending.clear()
             else:
                 self._generations[channel] = self._generations.get(channel, 0) + 1
+                self._latest_pending.pop(channel, None)
 
     def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
         self.cancel_pending()
+        self.stop_worker()
+        self._executor.shutdown(wait=False, cancel_futures=True)
+
+    def stop_worker(self) -> None:
+        """Stop the disposable child while keeping this client reusable."""
         with self._io_lock:
             process = self._process
             self._process = None
+            self._response_queue = None
             if process is not None:
                 try:
                     if process.poll() is None and process.stdin:
@@ -89,7 +129,6 @@ class DataEngineClient:
                         process.wait(timeout=1)
                 except Exception:
                     process.terminate()
-        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def _request_locked(self, operation: str, payload: dict, retry: bool) -> dict:
         process = self._ensure_process()
@@ -118,6 +157,9 @@ class DataEngineClient:
                 "hello", "ping", "lookup_text", "lookup_code",
                 "lookup_text_page", "lookup_code_page", "dictionary_snapshot",
                 "index_task_status", "cancel_index_task", "dictionary_entries_page",
+                "sharded_lookup_text", "sharded_lookup_code",
+                "sharded_dictionary_entries_page",
+                "indexed_dictionary_entries_page",
             }:
                 return self._request_locked(operation, payload, retry=False)
             raise
@@ -140,7 +182,10 @@ class DataEngineClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=(
+                getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                | getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+            ),
         )
         response_queue: queue.Queue[str] = queue.Queue()
         self._response_queue = response_queue

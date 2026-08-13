@@ -67,6 +67,19 @@ def test_code_line_edit_filters_paste_without_affecting_allowed_symbols(qapp) ->
     assert set(editor.last_rejected) == {"好", "；"}
 
 
+def test_code_line_edit_keeps_native_backspace_and_delete(qapp) -> None:
+    from PySide6.QtTest import QTest
+
+    editor = CodeLineEdit("abc", alphabet="abcdefghijklmnopqrstuvwxyz")
+    editor.setCursorPosition(3)
+    QTest.keyClick(editor, Qt.Key.Key_Backspace)
+    assert editor.text() == "ab"
+
+    editor.setCursorPosition(0)
+    QTest.keyClick(editor, Qt.Key.Key_Delete)
+    assert editor.text() == "b"
+
+
 def test_separator_aliases_are_normalized_and_removed_for_storage() -> None:
     assert normalize_display_code("yin’‘`hang") == "yin'hang"
     assert raw_code("yin'hang") == "yinhang"
@@ -193,6 +206,33 @@ def test_quick_add_collects_extra_codes(qapp) -> None:
     assert dialog._extra_code_layout.count() == len(values["additional_codes"])
     dialog._remove_code("y'h")
     assert "y'h" not in dialog.get_values()["additional_codes"]
+
+
+def test_quick_add_can_delete_default_after_choosing_another_code(qapp) -> None:
+    dialog = QuickAddDialog(prefill_text="银行")
+    dialog._initialize_prefill()
+    dialog._code.setText("yin'hang")
+    dialog._add_code("y'h")
+
+    assert dialog._btn_remove_main_code.isEnabled()
+    dialog._remove_main_code()
+    values = dialog.get_values()
+
+    assert values["code"] == ""
+    assert values["additional_codes"] == ["y'h"]
+    dialog._on_accept()
+    assert dialog.result() == dialog.DialogCode.Accepted
+
+
+def test_quick_add_rejects_saving_without_any_code(qapp) -> None:
+    dialog = QuickAddDialog()
+    dialog._text.setText("银行")
+    dialog._code.clear()
+
+    dialog._on_accept()
+
+    assert dialog.result() != dialog.DialogCode.Accepted
+    assert "至少保留一个有效编码" in dialog._err.text()
 
 
 def test_quick_add_extra_code_row_is_editable_and_saved(qapp) -> None:

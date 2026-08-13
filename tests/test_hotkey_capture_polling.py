@@ -240,6 +240,49 @@ def test_win32_capture_catches_clipboard_change(win32_backend_patched, monkeypat
     assert recorded and recorded[-1] == saved, "采集后应恢复原始剪贴板"
 
 
+def test_win32_capture_retries_copy_once_when_first_attempt_is_ignored(
+    win32_backend_patched, monkeypatch,
+):
+    b = win32_backend_patched
+    target = (0x100, 0x200, 0x400)
+    win32_backend.user32.GetForegroundWindow.return_value = target[0]
+    state = {"text": "previously-on-clipboard"}
+    recorded = []
+    attempts = []
+
+    def getter():
+        return state["text"]
+
+    def setter(text):
+        recorded.append(text)
+        state["text"] = text
+
+    def copy_selected(name):
+        attempts.append(name)
+        if len(attempts) == 2:
+            state["text"] = "第二次复制成功"
+
+    b._get_clipboard = getter
+    b._set_clipboard = setter
+    monkeypatch.setattr(win32_backend, "read_standard_edit_selection", lambda _hwnd: "")
+    monkeypatch.setattr(
+        win32_backend.Win32HotkeyBackend,
+        "_wait_for_hotkey_release",
+        staticmethod(lambda *_args, **_kwargs: True),
+    )
+    monkeypatch.setattr(
+        win32_backend.Win32HotkeyBackend,
+        "_send_copy_shortcut",
+        staticmethod(copy_selected),
+    )
+
+    result = b.capture_selection(target)
+
+    assert result == "第二次复制成功"
+    assert attempts == ["ctrl+c", "ctrl+c"]
+    assert recorded[-1] == "previously-on-clipboard"
+
+
 def test_win32_capture_waits_for_human_hotkey_release(
     win32_backend_patched, monkeypatch,
 ):

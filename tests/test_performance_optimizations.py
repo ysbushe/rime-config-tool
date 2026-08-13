@@ -83,6 +83,71 @@ def test_preview_engine_stays_warm_for_ten_minutes() -> None:
     assert service._idle_timeout_seconds == 10 * 60
 
 
+def test_deploy_invalidation_does_not_immediately_warm_preview(monkeypatch) -> None:
+    service = RimePreviewService("C:/Rime")
+    close = MagicMock()
+    warm = MagicMock()
+    monkeypatch.setattr(service, "close", close)
+    monkeypatch.setattr(service, "warm_up_async", warm)
+
+    service.invalidate_after_deploy()
+
+    close.assert_called_once_with()
+    warm.assert_not_called()
+
+
+def test_slow_vnext_quick_add_lookup_does_not_block_gui(qapp) -> None:
+    from src.ui.quick_add_dialog import QuickAddDialog
+
+    release = threading.Event()
+
+    class SlowIndex:
+        state = "ready"
+        prefers_async_queries = True
+
+        def ensure_ready_async(self):
+            return None
+
+        def lookup(self, _text, _codes):
+            release.wait(2)
+            return []
+
+    dialog = QuickAddDialog(system_dictionary_index=SlowIndex())
+    dialog._text.setText("测试")
+    dialog._code.setText("ceshi")
+    started = perf_counter()
+    dialog._refresh_dictionary_hint()
+    elapsed = perf_counter() - started
+
+    release.set()
+    assert elapsed < 0.2
+    assert dialog._dictionary_timer.isActive()
+    dialog.dispose()
+    dialog.close()
+
+
+def test_consecutive_auto_deploy_requests_are_debounced(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow
+
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    manager = window._phrase_manager
+    app_context.settings.auto_deploy = True
+    request = MagicMock(return_value=True)
+    manager._deploy_coordinator.request = request
+
+    manager._schedule_deploy()
+    manager._schedule_deploy()
+
+    request.assert_not_called()
+    assert manager._auto_deploy_timer.isActive()
+
+    manager._auto_deploy_timer.stop()
+    manager._start_auto_deploy()
+    request.assert_called_once_with()
+    window.dispose()
+    qapp.processEvents()
+
+
 def test_reentering_settings_tab_does_not_refresh_dictionary_catalog(qapp, app_context) -> None:
     from src.ui.main_window import MainWindow, TAB_LIBRARY, TAB_SETTINGS
 
@@ -206,3 +271,31 @@ def test_settings_are_split_into_stable_task_sections(qapp, app_context) -> None
         for index in range(widget._sections.count())
     ] == ["常规", "词典与文件", "备份与恢复", "诊断与更新"]
     widget.close()
+
+
+def test_gui_test_launch_is_visibly_marked(qapp, app_context, monkeypatch) -> None:
+    from src.ui.main_window import MainWindow
+
+    monkeypatch.setenv("RIME_CONFIG_GUI_TEST", "1")
+    window = MainWindow(app_context, background_tasks_enabled=False)
+
+    assert "GUI测试中" in window.windowTitle()
+    window.dispose()
+
+
+def test_normal_launch_index_refresh_waits_for_system_idle(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.main_window import MainWindow
+
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    window._background_tasks_enabled = True
+    ensure = MagicMock()
+    app_context.system_dictionary_index.ensure_ready_async = ensure
+    monkeypatch.setattr("src.ui.main_window.system_idle_seconds", lambda: 0.0)
+
+    window._start_optional_services()
+    window._try_deferred_index_refresh()
+
+    ensure.assert_not_called()
+    assert window._deferred_index_timer.isActive()
+    window.dispose()

@@ -37,6 +37,21 @@ def test_data_engine_protocol_and_lookup(tmp_path):
         client.close()
 
 
+def test_data_engine_reads_dictionary_page_from_legacy_compact_index(tmp_path):
+    path = _build_index(tmp_path)
+    source = tmp_path / "base.dict.yaml"
+    source.unlink()
+    client = DataEngineClient(timeout_seconds=5)
+    try:
+        page = client.request("indexed_dictionary_entries_page", {
+            "index_path": str(path), "scheme_id": "wanxiang",
+            "paths": [str(source)], "query": "", "limit": 20,
+        })
+        assert [item["text"] for item in page["entries"]] == ["还", "物体"]
+    finally:
+        client.close()
+
+
 def test_data_engine_latest_request_suppresses_stale_callback(tmp_path):
     path = _build_index(tmp_path)
     client = DataEngineClient(timeout_seconds=5)
@@ -126,6 +141,52 @@ def test_data_engine_background_refresh_and_paged_lookup(tmp_path):
         client.close()
 
 
+def test_data_engine_sharded_refresh_query_and_dictionary_page(tmp_path):
+    (tmp_path / "wanxiang.dict.yaml").write_text(
+        "---\nname: wanxiang\nimport_tables:\n  - base\n...\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "base.dict.yaml"
+    source.write_text(
+        "---\nname: base\n...\n还\thái\t900\n物体\twù tǐ\t800\n",
+        encoding="utf-8",
+    )
+    index_dir = tmp_path / "indexes" / "v3" / "wanxiang"
+    maintenance = DataEngineClient(timeout_seconds=5)
+    query = DataEngineClient(timeout_seconds=5)
+    try:
+        started = maintenance.request("start_sharded_index_refresh", {
+            "index_dir": str(index_dir),
+            "scheme_id": "wanxiang",
+            "rime_dir": str(tmp_path),
+            "roots": [["wanxiang", 1.2]],
+        })
+        deadline = time.monotonic() + 5
+        while True:
+            status = maintenance.request(
+                "index_task_status", {"task_id": started["task_id"]},
+            )
+            if status["status"] in {"completed", "failed", "cancelled"}:
+                break
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert status["status"] == "completed", status
+
+        found = query.request("sharded_lookup_code", {
+            "index_dir": str(index_dir), "scheme_id": "wanxiang",
+            "query": "wti", "limit": 20,
+        })
+        page = query.request("sharded_dictionary_entries_page", {
+            "index_dir": str(index_dir), "scheme_id": "wanxiang",
+            "paths": [str(source)], "query": "", "limit": 20,
+        })
+        assert [item["text"] for item in found["candidates"]] == ["物体"]
+        assert [item["text"] for item in page["entries"]] == ["还", "物体"]
+    finally:
+        query.close()
+        maintenance.close()
+
+
 def test_data_engine_dictionary_file_pages_and_exact_matching(tmp_path):
     source = tmp_path / "dicts" / "base.dict.yaml"
     source.parent.mkdir()
@@ -187,5 +248,40 @@ def test_latest_request_channels_do_not_cancel_each_other(tmp_path):
         assert finished.wait(5)
         assert {item[0] for item in received} == {"quick-tune", "settings"}
         assert all(item[2] is None for item in received)
+    finally:
+        client.close()
+
+
+def test_latest_request_channel_has_bounded_backlog(monkeypatch):
+    client = DataEngineClient(timeout_seconds=5)
+    started = threading.Event()
+    release = threading.Event()
+    delivered = threading.Event()
+    calls = []
+
+    def request(_operation, payload=None):
+        calls.append(int(payload["value"]))
+        if len(calls) == 1:
+            started.set()
+            release.wait(2)
+        return {"value": payload["value"]}
+
+    monkeypatch.setattr(client, "request", request)
+    try:
+        client.request_latest("test", {"value": 0}, lambda *_: None, channel="typing")
+        assert started.wait(1)
+        received = []
+        for value in range(1, 20):
+            client.request_latest(
+                "test", {"value": value},
+                lambda result, error: (
+                    received.append((result, error)), delivered.set()
+                ),
+                channel="typing",
+            )
+        release.set()
+        assert delivered.wait(2)
+        assert calls == [0, 19]
+        assert received == [({"value": 19}, None)]
     finally:
         client.close()

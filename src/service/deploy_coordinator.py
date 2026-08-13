@@ -24,10 +24,11 @@ class AsyncDeployCoordinator:
         self.pending = False
         self._results: queue.SimpleQueue[tuple[bool, str]] = queue.SimpleQueue()
 
-    def request(self) -> bool:
-        """Start a deploy, or remember one rerun; return whether a worker started."""
+    def request(self, *, rerun_if_running: bool = True) -> bool:
+        """Start a deploy, optionally remembering one rerun if already busy."""
         if self.running:
-            self.pending = True
+            if rerun_if_running:
+                self.pending = True
             return False
         self.running = True
 

@@ -5,8 +5,10 @@ from pathlib import Path
 import threading
 import time
 
+from src import __version__
 from src.plugins.input_diagnostics import InputDiagnosticsService
 from src.ui.input_diagnostics_widget import InputDiagnosticsWidget
+from src.diagnostics_main import InputDiagnosticsWindow
 from src.service.input_diagnostics_launcher import (
     diagnostics_command,
     diagnostics_working_directory,
@@ -71,6 +73,19 @@ def test_diagnostics_widget_builds_as_standalone_content(qapp, tmp_path) -> None
     widget.refresh(service.capture_now("test"))
     assert "未检测到" not in widget._processes.text()
     assert widget._btn_capture.text() == "记录当前现场"
+
+
+def test_diagnostics_gui_test_launch_is_visibly_marked(qapp, monkeypatch) -> None:
+    monkeypatch.setenv("RIME_CONFIG_GUI_TEST", "1")
+    monkeypatch.setattr(InputDiagnosticsService, "start", lambda _self: None)
+    monkeypatch.setattr(InputDiagnosticsService, "stop", lambda _self: None)
+    window = InputDiagnosticsWindow()
+    try:
+        assert window.windowTitle().endswith(f"v{__version__} · GUI测试中")
+    finally:
+        window.close()
+        window.deleteLater()
+        qapp.processEvents()
 
 
 def test_source_launcher_uses_separate_module_process(monkeypatch) -> None:

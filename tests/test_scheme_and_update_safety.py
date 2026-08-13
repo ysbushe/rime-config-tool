@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import zipfile
@@ -197,6 +198,65 @@ def test_wanxiang_update_snapshot_restores_every_managed_file(
     assert schema.read_bytes() == b"schema:\n  version: 1.0\n"
     assert dictionary.read_bytes() == b"old dictionary"
     assert personal.read_bytes() == b"personal"
+
+
+def test_wanxiang_update_does_not_rewrite_unchanged_official_file(
+        tmp_path, monkeypatch) -> None:
+    rime = tmp_path / "rime"
+    rime.mkdir()
+    schema_payload = _wanxiang_schema("2.0")
+    schema = rime / "wanxiang.schema.yaml"
+    schema.write_bytes(schema_payload)
+    old_timestamp = 1_700_000_000_000_000_000
+    os.utime(schema, ns=(old_timestamp, old_timestamp))
+    state = tmp_path / "state"
+    monkeypatch.setattr(
+        "src.service.wanxiang_update_service.user_config_dir", lambda: state,
+    )
+    service = WanxiangUpdateService(
+        str(rime), BackupService(rime, 3, tmp_path / "backups", namespace="wanxiang"),
+        TransactionalFileWriter(tmp_path / "journals"),
+    )
+    archive = tmp_path / "release.zip"
+    _make_wanxiang_zip(archive, schema_payload, b"new dictionary")
+    files, layout = service._inspect(archive)
+    service._save_manifest("1.0", files, layout, archive, adopt=True)
+    monkeypatch.setattr(
+        service, "_download_archive", lambda _url, destination: shutil.copy2(archive, destination),
+    )
+    report = WanxiangUpdateReport(
+        "1.0", "2.0", "test", True, "ok",
+        "https://github.com/amzxyz/rime-wanxiang/releases/download/v2.0/base.zip",
+        preflight_passed=True,
+    )
+
+    ok, message = service.update(report)
+
+    assert ok
+    assert schema.stat().st_mtime_ns == old_timestamp
+    assert "实际写入" in message
+
+
+def test_wanxiang_deployment_validation_requires_build_outputs(
+        tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "src.service.wanxiang_update_service.user_config_dir", lambda: tmp_path / "state",
+    )
+    service = WanxiangUpdateService(
+        str(tmp_path), BackupService(tmp_path, 3),
+        TransactionalFileWriter(tmp_path / "journals"),
+    )
+
+    ok, message = service.validate_deployment()
+    assert not ok
+    assert "wanxiang.table.bin" in message
+
+    build = tmp_path / "build"
+    build.mkdir()
+    for name in ("default.yaml", "wanxiang.schema.yaml", "wanxiang.table.bin"):
+        (build / name).write_bytes(b"ready")
+
+    assert service.validate_deployment()[0]
 
 
 def test_wanxiang_capability_preflight_accepts_newer_unregistered_package(

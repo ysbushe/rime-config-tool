@@ -65,6 +65,20 @@ class CompactLookupPage:
     next_cursor: int | None
 
 
+@dataclass(frozen=True)
+class CompactDictionaryEntry:
+    text: str
+    code: str
+    weight: int | None
+    record_id: int
+
+
+@dataclass(frozen=True)
+class CompactEntryPage:
+    entries: list[CompactDictionaryEntry]
+    next_cursor: int | None
+
+
 class CompactIndexBuildCancelled(RuntimeError):
     """Raised when a caller cancels a build before its atomic switch."""
 
@@ -412,6 +426,118 @@ class CompactDictionaryIndex:
             )
 
         return self._lookup_page(keys, size, cursor, convert)
+
+    def entries_page(
+        self,
+        query: str = "",
+        page_size: int = 200,
+        cursor: int | None = None,
+        source_paths: Iterable[str | Path] | None = None,
+    ) -> CompactEntryPage:
+        """Browse or exactly filter entries without reopening the source dictionary."""
+        size = max(1, min(500, int(page_size)))
+        start = max(0, int(cursor or 0))
+        if not self._is_compatible():
+            return CompactEntryPage([], None)
+        value = (query or "").strip()
+        with closing(self._connect_readonly()) as db:
+            file_ids = self._selected_file_ids(db, source_paths)
+            if not file_ids:
+                return CompactEntryPage([], None)
+            if value:
+                rows = self._exact_entry_records(
+                    db, value, start, size + 1, file_ids,
+                )
+            else:
+                rows = self._browse_entry_records(db, start, size + 1, file_ids)
+        has_more = len(rows) > size
+        visible = rows[:size]
+        entries = [
+            CompactDictionaryEntry(text, code, weight, record_id)
+            for text, code, _lengths, weight, _source, _quality, record_id in visible
+        ]
+        return CompactEntryPage(
+            entries,
+            entries[-1].record_id if has_more and entries else None,
+        )
+
+    @staticmethod
+    def _browse_entry_records(
+        db: sqlite3.Connection, cursor: int, limit: int, file_ids: list[int],
+    ) -> list[tuple]:
+        block_cursor = cursor >> 8
+        placeholders = ",".join("?" for _ in file_ids)
+        rows = db.execute(
+            "SELECT b.block_id, b.payload, f.source, f.quality "
+            "FROM blocks b JOIN files f ON f.file_id=b.file_id "
+            f"WHERE b.block_id>=? AND b.file_id IN ({placeholders}) "
+            "ORDER BY b.block_id",
+            (block_cursor, *file_ids),
+        )
+        result = []
+        for block_id, payload, source, quality in rows:
+            values = json.loads(zlib.decompress(payload).decode("utf-8"))
+            for offset, (text, code, lengths, weight) in enumerate(values):
+                record_id = (int(block_id) << 8) | offset
+                if record_id <= cursor:
+                    continue
+                result.append((
+                    text, code, bytes(lengths), weight, source, quality, record_id,
+                ))
+                if len(result) >= limit:
+                    return result
+        return result
+
+    @staticmethod
+    def _exact_entry_records(
+        db: sqlite3.Connection, query: str, cursor: int, limit: int,
+        file_ids: list[int],
+    ) -> list[tuple]:
+        text_value = query.casefold()
+        code_value = _normalise_code(query)
+        keys = {_fingerprint(_pack_text(query), 1)}
+        if code_value:
+            keys.add(_fingerprint(_pack_code(code_value), 2))
+        scan_cursor = cursor
+        result = []
+        while len(result) < limit:
+            rows = _seek_lookup_rows(
+                db, file_ids, keys, scan_cursor, max(500, limit * 25),
+            )
+            if not rows:
+                break
+            records = _resolve_records(db, rows)
+            for record in records:
+                text, code, _lengths, _weight, _source, _quality, record_id = record
+                scan_cursor = max(scan_cursor, int(record_id))
+                if int(record_id) <= cursor:
+                    continue
+                if text.casefold() == text_value or _normalise_code(code) == code_value:
+                    result.append(record)
+                    if len(result) >= limit:
+                        break
+            if len(rows) < max(500, limit * 25):
+                break
+        result.sort(key=lambda item: item[-1])
+        return result
+
+    @staticmethod
+    def _selected_file_ids(
+        db: sqlite3.Connection,
+        source_paths: Iterable[str | Path] | None,
+    ) -> list[int]:
+        rows = [(int(row[0]), str(row[1])) for row in db.execute(
+            "SELECT file_id, path FROM files"
+        )]
+        if source_paths is None:
+            return [file_id for file_id, _path in rows]
+        selected = {
+            os.path.normcase(os.path.abspath(str(path))) for path in source_paths
+        }
+        return [
+            file_id for file_id, path in rows
+            if os.path.normcase(os.path.abspath(path)) in selected
+        ]
 
     def _lookup_page(
         self,
