@@ -46,6 +46,7 @@ class DictionaryCenterDialog(QDialog):
             self, rime_dir, tune_entry: TuneCallback | None = None,
             scope: str = "all", parent=None,
             data_engine_client: DataEngineClient | None = None,
+            dictionary_index=None,
             transaction_writer: TransactionalFileWriter | None = None,
             backup_service: BackupService | None = None,
             saved_callback: SavedCallback | None = None,
@@ -60,6 +61,7 @@ class DictionaryCenterDialog(QDialog):
         self._service = DictionaryCatalogService(rime_dir)
         self._rime_dir = str(self._service.root)
         self._data_engine_client = data_engine_client
+        self._dictionary_index = dictionary_index
         self._engine_channel = f"dictionary-center-{id(self)}"
         self._tune_entry = tune_entry
         self._transaction_writer = transaction_writer
@@ -72,6 +74,10 @@ class DictionaryCenterDialog(QDialog):
         self._next_cursor: dict | None = None
         self._loading_append = False
         self._results: queue.SimpleQueue = queue.SimpleQueue()
+        self._catalog_results: queue.SimpleQueue = queue.SimpleQueue()
+        self._catalog_cache: dict[tuple[str, str], list[DictionaryCatalogItem]] = {}
+        self._catalog_request_id = 0
+        self._catalog_loading = False
         self._edit_session: DictionaryEditSession | None = None
         self._rebuilding_entries = False
         self._catalog_row = -1
@@ -209,7 +215,10 @@ class DictionaryCenterDialog(QDialog):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(50)
         self._poll_timer.timeout.connect(self._poll_results)
-        self._poll_timer.start()
+        self._catalog_poll_timer = QTimer(self)
+        self._catalog_poll_timer.setInterval(40)
+        self._catalog_poll_timer.timeout.connect(self._poll_catalog_results)
+        self._pending_requests: set[int] = set()
         self._entry_table.itemSelectionChanged.connect(self._update_tune_state)
         self._refresh_catalog()
 
@@ -227,19 +236,82 @@ class DictionaryCenterDialog(QDialog):
 
     def _refresh_catalog(self) -> None:
         schema_id = str(self._scheme.currentData() or "")
-        items = self._service.catalog(schema_id)
+        cache_key = (schema_id, self._scope)
+        cached = self._catalog_cache.get(cache_key)
+        # Modal callers historically expect a ready catalog immediately.  The
+        # persistent navigation page is the performance-sensitive path: keep
+        # its first recursive dictionary scan off the GUI thread and reuse the
+        # result for later scheme switches during this session.
+        if cached is not None:
+            self._apply_catalog(schema_id, cached)
+            return
+        if not self._embedded:
+            items = self._filtered_catalog(self._service.catalog(schema_id))
+            self._catalog_cache[cache_key] = items
+            self._apply_catalog(schema_id, items)
+            return
+
+        self._catalog_request_id += 1
+        request_id = self._catalog_request_id
+        self._catalog_loading = True
+        self._catalog_table.setEnabled(False)
+        self._status.setProperty("role", "info")
+        self._status.setText("正在后台读取当前方案的词典目录…")
+        self._catalog_poll_timer.start()
+
+        def worker() -> None:
+            try:
+                items = self._filtered_catalog(self._service.catalog(schema_id))
+                self._catalog_results.put((request_id, schema_id, items, None))
+            except Exception as exc:
+                self._catalog_results.put((request_id, schema_id, [], str(exc)))
+
+        threading.Thread(
+            target=worker, name="rime-dictionary-catalog", daemon=True,
+        ).start()
+
+    def _filtered_catalog(
+            self, items: list[DictionaryCatalogItem]) -> list[DictionaryCatalogItem]:
         if self._scope == "extensions":
             items = [item for item in items if item.kind != "系统词典入口"]
+        return items
+
+    def _poll_catalog_results(self) -> None:
+        while True:
+            try:
+                request_id, schema_id, items, error = self._catalog_results.get_nowait()
+            except queue.Empty:
+                return
+            if request_id != self._catalog_request_id:
+                continue
+            self._catalog_loading = False
+            self._catalog_poll_timer.stop()
+            self._catalog_table.setEnabled(True)
+            if error:
+                self._status.setProperty("role", "error")
+                self._status.setText(f"读取词典目录失败：{error}")
+                return
+            self._catalog_cache[(schema_id, self._scope)] = items
+            self._apply_catalog(schema_id, items)
+
+    def _apply_catalog(
+            self, schema_id: str, items: list[DictionaryCatalogItem]) -> None:
         self._catalog = items
         self._catalog_row = -1
         self._selected_item = None
         self._leave_editable_mode()
         self._next_cursor = None
-        self._catalog_table.setRowCount(len(items))
-        for row, item in enumerate(items):
-            values = (item.title, item.relative_path, item.purpose, item.kind)
-            for column, value in enumerate(values):
-                self._catalog_table.setItem(row, column, QTableWidgetItem(value))
+        self._catalog_table.setUpdatesEnabled(False)
+        self._catalog_table.blockSignals(True)
+        try:
+            self._catalog_table.setRowCount(len(items))
+            for row, item in enumerate(items):
+                values = (item.title, item.relative_path, item.purpose, item.kind)
+                for column, value in enumerate(values):
+                    self._catalog_table.setItem(row, column, QTableWidgetItem(value))
+        finally:
+            self._catalog_table.blockSignals(False)
+            self._catalog_table.setUpdatesEnabled(True)
         self._entry_table.setRowCount(0)
         self._load_more.setEnabled(False)
         self._tune_button.setEnabled(False)
@@ -313,10 +385,39 @@ class DictionaryCenterDialog(QDialog):
             return
         self._request_id += 1
         request_id = self._request_id
+        # request_latest keeps only the newest pending request, so mirror that
+        # bounded state here instead of waiting forever for suppressed callbacks.
+        self._pending_requests.clear()
+        self._pending_requests.add(request_id)
+        self._poll_timer.start()
         query = self._search.text()
         self._loading_append = append
         self._load_more.setEnabled(False)
         self._status.setText("正在读取下一页…" if append else "正在读取词典…")
+
+        if self._dictionary_index is not None:
+            def deliver(result, error) -> None:
+                self._results.put((
+                    request_id, item.relative_path, result, error, append,
+                ))
+
+            generation = self._dictionary_index.request_entries_page_latest(
+                item.entry_paths,
+                query,
+                200,
+                self._next_cursor if append else None,
+                deliver,
+                channel=self._engine_channel,
+            )
+            if generation is None:
+                self._pending_requests.discard(request_id)
+                self._poll_timer.stop()
+                self._status.setText(
+                    "系统词典索引正在后台准备；完成后即可浏览，不会扫描原始大词典。"
+                )
+                self._load_more.setEnabled(False)
+                self._dictionary_index.ensure_ready_async()
+            return
 
         if self._data_engine_client is not None:
             payload = {
@@ -352,7 +453,10 @@ class DictionaryCenterDialog(QDialog):
             try:
                 request_id, relative_path, result, error, append = self._results.get_nowait()
             except queue.Empty:
+                if not self._pending_requests:
+                    self._poll_timer.stop()
                 return
+            self._pending_requests.discard(request_id)
             if request_id != self._request_id:
                 continue
             if self._selected_item is None \
@@ -384,7 +488,10 @@ class DictionaryCenterDialog(QDialog):
                 values = (
                     str(entry.get("text", "")), str(entry.get("code", "")),
                     str(entry.get("weight") or "—"),
-                    str(entry.get("source_file", "")),
+                    str(entry.get("source_file") or (
+                        self._selected_item.relative_path
+                        if self._selected_item is not None else ""
+                    )),
                 )
             else:
                 values = (entry.text, entry.code, entry.weight or "—", entry.source_file)
@@ -585,7 +692,13 @@ class DictionaryCenterDialog(QDialog):
 
     def dispose(self) -> None:
         """Stop background work when a modal closes or an embedded page is replaced."""
-        if self._data_engine_client is not None:
+        if self._dictionary_index is not None:
+            self._dictionary_index.cancel_pending(self._engine_channel)
+        elif self._data_engine_client is not None:
             self._data_engine_client.cancel_pending(self._engine_channel)
+        self._pending_requests.clear()
         self._search_timer.stop()
         self._poll_timer.stop()
+        self._catalog_request_id += 1
+        self._catalog_loading = False
+        self._catalog_poll_timer.stop()

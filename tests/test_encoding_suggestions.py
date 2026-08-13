@@ -6,14 +6,78 @@ from src.encoding.code_suggestions import (
     normalize_display_code,
     raw_code,
 )
+from src.encoding.code_input import (
+    allowed_code_characters,
+    sanitize_code_input,
+    validate_code_input,
+)
 from src.repo.phrase_repo import Phrase
 from src.service.pinyin_display_store import PinyinDisplayStore
 from src.service.pinyin_service import PinyinService
 from src.ui.quick_add_dialog import QuickAddDialog
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QLineEdit, QPushButton
 
 from src.ui.phrase_editor import PhraseEditor
 from src.ui.multi_code_editor import MultiCodeEditor
+from src.ui.code_line_edit import CodeLineEdit
+
+
+def test_code_policy_blocks_cjk_fullwidth_and_whitespace() -> None:
+    accepted, rejected = sanitize_code_input("Ni好； '9", "")
+
+    assert accepted == "ni'9"
+    assert set(rejected) == {"好", "；", " "}
+    assert validate_code_input("NI'9") == "ni'9"
+
+
+def test_code_policy_allows_only_symbols_declared_by_schema() -> None:
+    assert ";" not in allowed_code_characters("")
+    assert ";" in allowed_code_characters("abcdefghijklmnopqrstuvwxyz;")
+    assert "›" in allowed_code_characters("abcdefghijklmnopqrstuvwxyz›")
+    assert "；" not in allowed_code_characters("abcdefghijklmnopqrstuvwxyz；")
+    assert sanitize_code_input("ab;/2", "abcdefghijklmnopqrstuvwxyz0123456789;/") == (
+        "ab;/2", "",
+    )
+
+
+def test_code_line_edit_locally_blocks_ime_commit_and_normalizes_keys(qapp) -> None:
+    from PySide6.QtGui import QInputMethodEvent
+    from PySide6.QtTest import QTest
+
+    editor = CodeLineEdit(alphabet="abcdefghijklmnopqrstuvwxyz0123456789/")
+    QTest.keyClicks(editor, "Ab3")
+    event = QInputMethodEvent()
+    event.setCommitString("中文；")
+    editor.inputMethodEvent(event)
+
+    assert editor.text() == "ab3"
+    assert editor.last_rejected == "中文；"
+    assert editor.testAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled) is False
+
+
+def test_code_line_edit_filters_paste_without_affecting_allowed_symbols(qapp) -> None:
+    from PySide6.QtTest import QTest
+
+    editor = CodeLineEdit(alphabet="abcdefghijklmnopqrstuvwxyz0123456789/")
+    qapp.clipboard().setText("ni好；/2")
+    QTest.keyClick(editor, Qt.Key.Key_V, Qt.KeyboardModifier.ControlModifier)
+
+    assert editor.text() == "ni/2"
+    assert set(editor.last_rejected) == {"好", "；"}
+
+
+def test_code_line_edit_keeps_native_backspace_and_delete(qapp) -> None:
+    from PySide6.QtTest import QTest
+
+    editor = CodeLineEdit("abc", alphabet="abcdefghijklmnopqrstuvwxyz")
+    editor.setCursorPosition(3)
+    QTest.keyClick(editor, Qt.Key.Key_Backspace)
+    assert editor.text() == "ab"
+
+    editor.setCursorPosition(0)
+    QTest.keyClick(editor, Qt.Key.Key_Delete)
+    assert editor.text() == "b"
 
 
 def test_separator_aliases_are_normalized_and_removed_for_storage() -> None:
@@ -142,6 +206,47 @@ def test_quick_add_collects_extra_codes(qapp) -> None:
     assert dialog._extra_code_layout.count() == len(values["additional_codes"])
     dialog._remove_code("y'h")
     assert "y'h" not in dialog.get_values()["additional_codes"]
+
+
+def test_quick_add_can_delete_default_after_choosing_another_code(qapp) -> None:
+    dialog = QuickAddDialog(prefill_text="银行")
+    dialog._initialize_prefill()
+    dialog._code.setText("yin'hang")
+    dialog._add_code("y'h")
+
+    assert dialog._btn_remove_main_code.isEnabled()
+    dialog._remove_main_code()
+    values = dialog.get_values()
+
+    assert values["code"] == ""
+    assert values["additional_codes"] == ["y'h"]
+    dialog._on_accept()
+    assert dialog.result() == dialog.DialogCode.Accepted
+
+
+def test_quick_add_rejects_saving_without_any_code(qapp) -> None:
+    dialog = QuickAddDialog()
+    dialog._text.setText("银行")
+    dialog._code.clear()
+
+    dialog._on_accept()
+
+    assert dialog.result() != dialog.DialogCode.Accepted
+    assert "至少保留一个有效编码" in dialog._err.text()
+
+
+def test_quick_add_extra_code_row_is_editable_and_saved(qapp) -> None:
+    dialog = QuickAddDialog(prefill_text="银行")
+    dialog._add_code("y'h")
+    editor = dialog.findChild(QLineEdit, "ExtraCodeEdit")
+
+    assert editor is not None and not editor.isReadOnly()
+    editor.setText("yin’h")
+    editor.textEdited.emit(editor.text())
+    editor.editingFinished.emit()
+
+    assert editor.text() == "yin'h"
+    assert dialog.get_values()["additional_codes"] == ["yin'h"]
 
 
 def test_quick_add_prefill_reserves_preview_and_suggestion_space(qapp) -> None:

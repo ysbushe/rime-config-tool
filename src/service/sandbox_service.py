@@ -20,9 +20,20 @@ from src.config.paths import (
     group_sidecar_path,
     user_config_dir,
 )
+from src.service.managed_files import known_managed_schemes
 from src.settings import Settings
 
-_MANAGED_FILES = (PHRASE_FILENAME, SCHEMA_FILENAME, SYMBOLS_FILENAME)
+_MANAGED_FILES = tuple(dict.fromkeys(
+    [
+        SYMBOLS_FILENAME, "default.custom.yaml", "default.yaml", "user.yaml",
+        "weasel.yaml", "weasel.custom.yaml",
+    ]
+    + [name for scheme in known_managed_schemes()
+       for name in (
+           scheme.phrase_filename, scheme.schema_filename, scheme.display_filename,
+           f"{scheme.schema_id}.custom.yaml",
+       )]
+))
 
 
 class SandboxService:
@@ -54,18 +65,24 @@ class SandboxService:
         sb = self.sandbox_dir()
         sb.mkdir(parents=True, exist_ok=True)
         copy_pairs = [(real_dir / fn, sb / fn) for fn in _MANAGED_FILES]
-        sidecar = group_sidecar_path(real_dir, PHRASE_FILENAME)
-        copy_pairs.append((sidecar, sb / sidecar.name))
-        copy_pairs.append((real_dir / "pinyin_display.ini", sb / "pinyin_display.ini"))
+        copy_pairs.append((real_dir / "build" / "weasel.yaml", sb / "build" / "weasel.yaml"))
+        copy_pairs.extend((path, sb / path.name) for path in real_dir.glob("*.ico"))
+        for scheme in known_managed_schemes():
+            sidecar = group_sidecar_path(real_dir, scheme.phrase_filename)
+            copy_pairs.append((sidecar, sb / sidecar.name))
         for src, dst in copy_pairs:
             if src.exists() and (
                     force_refresh
                     or not dst.exists()
                     or dst.stat().st_mtime < src.stat().st_mtime):
+                dst.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, dst)
             elif force_refresh and not src.exists() and dst.exists():
                 # A fresh sandbox must not retain sidecars from another source.
                 dst.unlink()
+        preview_source = real_dir / "preview"
+        if preview_source.is_dir():
+            shutil.copytree(preview_source, sb / "preview", dirs_exist_ok=True)
         self._prepared_source = source_key
         return str(sb)
 

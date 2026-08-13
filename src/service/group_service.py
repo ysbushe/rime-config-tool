@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 from src.config.paths import group_sidecar_path, user_config_dir
 from src.utils.encoding import write_text_utf8
 from src.utils.logger import get_logger
+from src.service.file_transaction import FileChange, TransactionalFileWriter, capture_revision
 
 logger = get_logger(__name__)
 
@@ -95,6 +96,15 @@ class GroupService:
         self._cache = _GroupCache()
         self.load()
 
+    def reset(self, rime_dir: str, phrase_filename: str = "custom_phrase.txt") -> None:
+        """Reattach the sidecar to the selected scheme's personal dictionary."""
+        self._enabled = bool(rime_dir)
+        self._path = group_sidecar_path(rime_dir, phrase_filename) if self._enabled \
+            else Path(f"{phrase_filename}.groups.json")
+        self._state = GroupState()
+        self._cache = _GroupCache()
+        self.load(force=True)
+
     # ------------------------------------------------------------------ #
     # 持久化
     # ------------------------------------------------------------------ #
@@ -149,6 +159,39 @@ class GroupService:
         if self._enabled:
             self._cache.update(self._path)
 
+    def restore_compatible_sidecar(
+        self,
+        source: Path,
+        valid_keys: set[str],
+        writer: TransactionalFileWriter,
+    ) -> int:
+        """Create a missing scheme sidecar from matching entries of another scheme."""
+        if not self._enabled or self._path.exists() or not source.is_file():
+            return 0
+        try:
+            raw = json.loads(source.read_text(encoding="utf-8"))
+            source_groups = [str(item) for item in raw.get("groups", []) if str(item)]
+            membership = {
+                str(key): str(group)
+                for key, group in dict(raw.get("membership", {})).items()
+                if str(key) in valid_keys and str(group) in source_groups
+            }
+        except (OSError, ValueError, json.JSONDecodeError, TypeError):
+            return 0
+        if not membership:
+            return 0
+        self._state = GroupState(source_groups, membership)
+        writer.commit([FileChange(
+            self._path, self.serialized_text().encode("utf-8"),
+            capture_revision(self._path),
+        )])
+        self.mark_saved()
+        logger.info(
+            "已从兼容 sidecar 恢复 %d 条分组归属：%s -> %s",
+            len(membership), source.name, self._path.name,
+        )
+        return len(membership)
+
     # ------------------------------------------------------------------ #
     # 分组定义
     # ------------------------------------------------------------------ #
@@ -167,7 +210,7 @@ class GroupService:
             return True
         return False
 
-    def remove_group(self, name: str) -> bool:
+    def remove_group(self, name: str, save: bool = True) -> bool:
         if name not in self._state.groups:
             return False
         self._state.groups.remove(name)
@@ -175,10 +218,11 @@ class GroupService:
         self._state.membership = {
             k: v for k, v in self._state.membership.items() if v != name
         }
-        self.save()
+        if save:
+            self.save()
         return True
 
-    def rename_group(self, old: str, new: str) -> bool:
+    def rename_group(self, old: str, new: str, save: bool = True) -> bool:
         new = (new or "").strip()
         if not new or new == _ALL_GROUP or new in self._state.groups:
             return False
@@ -189,7 +233,8 @@ class GroupService:
         self._state.membership = {
             k: (new if v == old else v) for k, v in self._state.membership.items()
         }
-        self.save()
+        if save:
+            self.save()
         return True
 
     # ------------------------------------------------------------------ #

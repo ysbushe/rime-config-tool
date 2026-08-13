@@ -95,3 +95,32 @@ def test_deploy_coordinator_coalesces_repeated_requests() -> None:
     assert outcome.ok
     assert outcome.rerun_requested
     assert deploy.deploy.call_count == 1
+
+
+def test_deploy_coordinator_can_ignore_repeated_manual_request() -> None:
+    entered = Event()
+    release = Event()
+    deploy = MagicMock()
+
+    def run():
+        entered.set()
+        release.wait(1)
+        return True, "ok"
+
+    deploy.deploy.side_effect = run
+    coordinator = AsyncDeployCoordinator(deploy)
+
+    assert coordinator.request()
+    assert entered.wait(1)
+    assert not coordinator.request(rerun_if_running=False)
+    release.set()
+    deadline = time.monotonic() + 1
+    outcome = None
+    while outcome is None and time.monotonic() < deadline:
+        outcome = coordinator.take_result()
+        if outcome is None:
+            time.sleep(0.01)
+
+    assert outcome is not None
+    assert not outcome.rerun_requested
+    assert deploy.deploy.call_count == 1

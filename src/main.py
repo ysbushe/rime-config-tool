@@ -30,6 +30,7 @@ def _prewarm_quick_add_dialog(context: AppContext) -> None:
         system_dictionary_index=context.system_dictionary_index,
         rime_preview_service=context.rime_preview_service,
         create_group=context.group_service.add_group,
+        code_alphabet=context.schema_repo.speller_alphabet(),
     )
     dialog.dispose()
     dialog.deleteLater()
@@ -73,7 +74,12 @@ def main() -> int:
         logger.warning("Rime 目录无效或不存在，请在设置页指定。")
 
     context = AppContext.build(settings)
-    window = MainWindow(context, start_minimized=start_minimized)
+    gui_test = os.environ.get("RIME_CONFIG_GUI_TEST") == "1"
+    window = MainWindow(
+        context,
+        start_minimized=start_minimized,
+        background_tasks_enabled=not gui_test,
+    )
     _prewarm_quick_add_dialog(context)
     if start_minimized:
         # Create the native handle before hiding. A never-shown Qt window may
@@ -94,13 +100,14 @@ def main() -> int:
     # IPC activation is not latency-sensitive; halve idle wakeups without a visible delay.
     wake_timer.start(400)
 
-    mode = "开机自启最小化" if start_minimized else "普通启动"
+    mode = ("GUI测试" if gui_test else
+            "开机自启最小化" if start_minimized else "普通启动")
     logger.info("应用已启动（托盘常驻）。模式=%s", mode)
     try:
         return app.exec()
     finally:
         wake_timer.stop()
-        context.data_engine_client.close()
+        context.shutdown()
         instance_guard.release()
 
 

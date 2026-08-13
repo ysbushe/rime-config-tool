@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
+from src.service.hotkey_backends.win32_selection import read_standard_edit_selection
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -245,29 +246,42 @@ class Win32HotkeyBackend:
 
         采用行业标准做法：
 
-        * 用 ``GetGUIThreadInfo`` 取前台线程的真实焦点控件（比依赖
-          ``AttachThreadInput`` 成功后的 ``GetFocus`` 更可靠，避免二次修复
-          (Bug B) 中因 ``GetFocus`` 返回 0 导致 WM_COPY 根本没发出的问题）；
-        * 检查 ``AttachThreadInput`` 返回值，失败仅降级，不再静默致命；
-        * best-effort 前台化（``AllowSetForegroundWindow`` / ``SetForegroundWindow`` /
-          ``SetFocus``），确保按键落点正确；
+        * 用 ``GetGUIThreadInfo`` 取前台线程的真实焦点控件；
+        * 不调用 ``AttachThreadInput``，避免采集期间耦合并阻塞目标程序的输入队列；
+        * 仅当目标窗口仍在前台且热键已释放时才模拟一次复制快捷键；
         * 先发 ``WM_COPY``，未变化时再回退 SendInput Ctrl+C 兜底；
         * 全程 try/except 兜底，采集结束恢复原始剪贴板。
         """
+        fg_hwnd, fg_thread, focus_hwnd = target or self.capture_target()
+        # RegisterHotKey fires on key-down. Waiting in this worker avoids
+        # turning the fallback Ctrl+C into Ctrl+Alt+C for ordinary human key
+        # presses, without blocking Qt or attaching another process' input queue.
+        # Some keyboards, IMEs and synthetic-key senders report modifier-up
+        # noticeably later than WM_HOTKEY.  This wait runs only in the capture
+        # worker, so allowing a normal long press does not block either Qt or
+        # the target application's input queue.
+        if not self._wait_for_hotkey_release(timeout=1.2):
+            logger.info("热键取词：修饰键长时间未释放，取消采集")
+            return ""
+        try:
+            current_foreground = int(user32.GetForegroundWindow())
+        except Exception:
+            current_foreground = fg_hwnd
+        if fg_hwnd and current_foreground and current_foreground != fg_hwnd:
+            logger.info("热键取词：前台窗口已变化，取消采集")
+            return ""
+
+        direct_text = read_standard_edit_selection(focus_hwnd)
+        if direct_text and not _is_internal_workdir_text(direct_text):
+            logger.info("热键取词：捕获来源=edit_selection")
+            return direct_text
+
         saved = self._get_clipboard()
         sentinel = f"__RIME_CONFIG_TOOL_CAPTURE_SENTINEL_{time.monotonic_ns()}__"
         self._set_clipboard(sentinel)
         probe = self._get_clipboard()
-        fg_hwnd, fg_thread, focus_hwnd = target or self.capture_target()
-        cur_thread = 0
         text = ""
-        attached = False
         try:
-            try:
-                cur_thread = int(user32.GetCurrentThreadId())
-            except Exception:
-                pass
-
             logger.info(
                 "热键取词：前台窗口=%s(%s)，焦点控件=%s(%s)",
                 fg_hwnd,
@@ -276,27 +290,8 @@ class Win32HotkeyBackend:
                 _hwnd_class_name(focus_hwnd),
             )
 
-            # c. 附加线程输入（检查返回值，失败仅降级，不静默致命）
-            if fg_thread and fg_thread != cur_thread:
-                try:
-                    if user32.AttachThreadInput(cur_thread, fg_thread, True) != 0:
-                        attached = True
-                    else:
-                        logger.warning("AttachThreadInput 失败，降级走前台化+Ctrl+C 兜底")
-                except Exception:
-                    pass
-
-            # d. 发复制前 best-effort 前台化，确保按键落点正确
-            try:
-                user32.AllowSetForegroundWindow(ASFW_ANY)
-                if fg_hwnd:
-                    user32.SetForegroundWindow(int(fg_hwnd))
-                if focus_hwnd:
-                    user32.SetFocus(int(focus_hwnd))
-            except Exception:
-                pass
-
-            # e. 先发 WM_COPY（标准 edit/richedit/combo 收到即复制选中内容）
+            # Keep the target process input queue independent. Attaching input
+            # threads while polling can briefly stall its edit and IME queue.
             try:
                 if focus_hwnd:
                     user32.PostMessageW(int(focus_hwnd), WM_COPY, 0, 0)
@@ -305,12 +300,18 @@ class Win32HotkeyBackend:
 
             # f. 轮询：先等 WM_COPY 生效；未变化时按窗口类型依次尝试复制快捷键。
             #    普通程序偏向 Ctrl+C；终端类窗口优先 Ctrl+Shift+C，避免 Ctrl+C 中断。
-            attempts = self._copy_attempts_for(_hwnd_class_name(fg_hwnd), _hwnd_class_name(focus_hwnd))
+            base_attempts = self._copy_attempts_for(
+                _hwnd_class_name(fg_hwnd), _hwnd_class_name(focus_hwnd),
+            )
+            # Some Chromium and elevated windows accept the fallback copy only
+            # on a subsequent injection. Retry once while the captured target
+            # remains foreground; keep the operation bounded and never attach
+            # another process' input queue.
+            attempts = base_attempts + base_attempts
             attempt_index = 0
-            # 缩短空取词等待，同时为最后一次复制保留响应时间。
-            deadline = time.monotonic() + (0.35 if len(attempts) <= 2 else 0.44)
+            # 为第二次复制和最后一次剪贴板响应保留有限时间。
+            deadline = time.monotonic() + 0.58
             next_attempt_at = time.monotonic() + 0.04
-            release_waited = False
             capture_source = "wm_copy"
             while time.monotonic() < deadline:
                 cur = self._get_clipboard()
@@ -329,25 +330,27 @@ class Win32HotkeyBackend:
                         logger.info("热键取词：捕获来源=%s", capture_source)
                         break
                 if attempt_index < len(attempts) and time.monotonic() >= next_attempt_at:
-                    if not release_waited:
-                        self._wait_for_hotkey_release(timeout=0.08)
-                        release_waited = True
+                    try:
+                        current_foreground = int(user32.GetForegroundWindow())
+                    except Exception:
+                        current_foreground = fg_hwnd
+                    if fg_hwnd and current_foreground and current_foreground != fg_hwnd:
+                        logger.info("热键取词：前台窗口已变化，取消模拟复制按键")
+                        break
                     attempt = attempts[attempt_index]
                     capture_source = attempt
-                    logger.info("热键取词：复制尝试=%s", attempt)
+                    logger.info(
+                        "热键取词：复制尝试=%s attempt=%s/%s",
+                        attempt, attempt_index + 1, len(attempts),
+                    )
                     self._send_copy_shortcut(attempt)
                     attempt_index += 1
-                    next_attempt_at = time.monotonic() + 0.09
+                    next_attempt_at = time.monotonic() + 0.14
                 time.sleep(0.01)
 
             text = text or ""
             logger.info("热键取词：结果=%s", "成功" if text else "空")
         finally:
-            if attached:
-                try:
-                    user32.AttachThreadInput(cur_thread, fg_thread, False)
-                except Exception:
-                    pass
             time.sleep(0.02)
             self._set_clipboard(saved)
         return text
@@ -356,8 +359,8 @@ class Win32HotkeyBackend:
     def _copy_attempts_for(fg_class: str, focus_class: str) -> tuple[str, ...]:
         classes = {fg_class, focus_class}
         if classes & _TERMINAL_CLASSES:
-            return ("ctrl+shift+c", "ctrl+insert")
-        return ("ctrl+c", "ctrl+shift+c", "ctrl+insert")
+            return ("ctrl+shift+c",)
+        return ("ctrl+c",)
 
     @staticmethod
     def _send_copy_shortcut(name: str) -> None:
@@ -384,17 +387,18 @@ class Win32HotkeyBackend:
             pass
 
     @staticmethod
-    def _wait_for_hotkey_release(timeout: float = 0.12) -> None:
+    def _wait_for_hotkey_release(timeout: float = 0.12) -> bool:
         """短等热键修饰键松开，避免 Ctrl+Alt+Q 触发后兜底复制变成 Ctrl+Alt+C。"""
-        deadline = time.time() + timeout
+        deadline = time.monotonic() + timeout
         keys = (VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN)
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             try:
                 if all((int(user32.GetAsyncKeyState(vk)) & 0x8000) == 0 for vk in keys):
-                    return
+                    return True
             except Exception:
-                return
+                return False
             time.sleep(0.01)
+        return False
     @staticmethod
     def _send_ctrl_c() -> None:
         """Ctrl+C 兜底：用 SendInput（比 keybd_event 更可靠的前台输入注入）。"""

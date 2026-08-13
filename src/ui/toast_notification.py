@@ -23,6 +23,10 @@ class ToastNotification(QFrame):
         self._close.setToolTip("关闭提示")
         self._close.clicked.connect(self.hide)
         title_row.addWidget(self._title, 1)
+        self._countdown = QLabel()
+        self._countdown.setObjectName("ToastCountdown")
+        self._countdown.setProperty("role", "muted")
+        title_row.addWidget(self._countdown)
         title_row.addWidget(self._close)
         self._message = QLabel()
         self._message.setObjectName("ResultToastMessage")
@@ -51,8 +55,17 @@ class ToastNotification(QFrame):
         layout.addWidget(self._message)
         layout.addWidget(self._detail)
         self._timer = QTimer(self)
-        self._timer.setSingleShot(True)
-        self._timer.timeout.connect(self.hide)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+        self._remaining = 0
+
+    def _tick(self) -> None:
+        self._remaining -= 1
+        if self._remaining <= 0:
+            self._timer.stop()
+            self.hide()
+            return
+        self._countdown.setText(f"{self._remaining} 秒后关闭")
 
     def show_result(self, ok: bool, message: str) -> None:
         self.setProperty("role", "success" if ok else "error")
@@ -77,7 +90,9 @@ class ToastNotification(QFrame):
             self.move(area.right() - self.width() - 18, area.bottom() - self.height() - 18)
         self.show()
         self.raise_()
-        self._timer.start(10000)
+        self._remaining = 5
+        self._countdown.setText("5 秒后关闭")
+        self._timer.start()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.RightButton:

@@ -19,13 +19,13 @@ from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QLabel,
     QHBoxLayout,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from src.service.group_service import GroupService
-from src.ui.delete_confirm_dialog import confirm_delete
 from src.ui.theme import accent_color
 
 # 分组配色（循环取色，保证每组有稳定可辨识的颜色）
@@ -68,11 +68,15 @@ class GroupPanel(QWidget):
     """分组侧栏。"""
 
     groupSelected = Signal(str)
+    stateChanged = Signal(str)
 
-    def __init__(self, group_service: GroupService, parent: QWidget | None = None, count_provider: Callable[[], dict[str, int]] | None = None) -> None:
+    def __init__(self, group_service: GroupService, parent: QWidget | None = None,
+                 count_provider: Callable[[], dict[str, int]] | None = None,
+                 backup_before_delete: Callable[[], tuple[bool, str]] | None = None) -> None:
         super().__init__(parent)
         self._groups = group_service
         self._count_provider = count_provider
+        self._backup_before_delete = backup_before_delete
         self._build_ui()
         self.refresh()
 
@@ -170,22 +174,38 @@ class GroupPanel(QWidget):
 
         name, ok = QInputDialog.getText(self, "新建分组", "分组名称：")
         if ok and name.strip():
-            if self._groups.add_group(name.strip()):
+            if self._groups.add_group(name.strip(), save=False):
                 self.refresh()
                 self._select(name.strip())
+                self.stateChanged.emit("已暂存新分组，请点击保存修改。")
 
     def _on_delete(self) -> None:
         if self._current in (GroupService.all_group_label(), ""):
             return
-        if not confirm_delete(
-            self,
-            "删除分组",
-            f"确认删除分组「{self._current}」？成员将变为未分组。",
-        ):
+        box = QMessageBox(self)
+        box.setWindowTitle("删除分组")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(f"删除分组「{self._current}」后，词条不会删除，但会变为未分组。")
+        direct = box.addButton("直接删除", QMessageBox.ButtonRole.DestructiveRole)
+        backup = box.addButton("备份当前词库后删除", QMessageBox.ButtonRole.AcceptRole)
+        cancel = box.addButton("取消删除", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is cancel or clicked is None:
             return
-        self._groups.remove_group(self._current)
+        if clicked is backup:
+            if self._backup_before_delete is None:
+                QMessageBox.warning(self, "备份失败", "当前页面没有可用的备份服务，已取消删除。")
+                return
+            ok, message = self._backup_before_delete()
+            if not ok:
+                QMessageBox.warning(self, "备份失败", message + "\n已取消删除。")
+                return
+        self._groups.remove_group(self._current, save=False)
         self.refresh()
         self._select(GroupService.all_group_label())
+        self.stateChanged.emit("已暂存删除分组，请点击保存修改。")
 
     def select_all(self, emit: bool = True) -> None:
         name = GroupService.all_group_label()
@@ -194,5 +214,19 @@ class GroupPanel(QWidget):
         if emit:
             self.groupSelected.emit(name)
 
+    def select(self, name: str, emit: bool = True) -> None:
+        """Select an existing group for restored workspace filters."""
+        allowed = {GroupService.all_group_label(), *self._groups.list_groups()}
+        target = name if name in allowed else GroupService.all_group_label()
+        self._current = target
+        self._apply_selection_style()
+        if emit:
+            self.groupSelected.emit(target)
+
     def current_group(self) -> str:
         return self._current
+
+    def reattach(self, service: GroupService) -> None:
+        self._groups = service
+        self.select_all(emit=False)
+        self.refresh()

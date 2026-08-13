@@ -34,6 +34,16 @@ class SchemaRepo:
         self._cache = cache  # 可选：CacheService，用于跳过未变化文件的重复解析
         self.load()
 
+    def reset(self, path: str, cache: object = None) -> None:
+        """Reattach to another scheme file while preserving the repository API."""
+        self.path = Path(path)
+        self._cache = cache
+        self._data = {}
+        self._switch_defs = {}
+        self._load_error = ""
+        self.field_map = FieldMap.default_for("schema")
+        self.load(force=True)
+
     # ------------------------------------------------------------------ #
     # 读取
     # ------------------------------------------------------------------ #
@@ -106,6 +116,10 @@ class SchemaRepo:
 
     def schema_version(self) -> str:
         return str((self._data.get("schema") or {}).get("version", ""))
+
+    def speller_alphabet(self) -> str:
+        """Return the active schema's explicit keyboard alphabet, if present."""
+        return str((self._data.get("speller") or {}).get("alphabet", ""))
 
     # ------------------------------------------------------------------ #
     # switches 复选

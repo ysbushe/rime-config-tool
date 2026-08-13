@@ -83,20 +83,149 @@ def test_preview_engine_stays_warm_for_ten_minutes() -> None:
     assert service._idle_timeout_seconds == 10 * 60
 
 
+def test_deploy_invalidation_does_not_immediately_warm_preview(monkeypatch) -> None:
+    service = RimePreviewService("C:/Rime")
+    close = MagicMock()
+    warm = MagicMock()
+    monkeypatch.setattr(service, "close", close)
+    monkeypatch.setattr(service, "warm_up_async", warm)
+
+    service.invalidate_after_deploy()
+
+    close.assert_called_once_with()
+    warm.assert_not_called()
+
+
+def test_slow_vnext_quick_add_lookup_does_not_block_gui(qapp) -> None:
+    from src.ui.quick_add_dialog import QuickAddDialog
+
+    release = threading.Event()
+
+    class SlowIndex:
+        state = "ready"
+        prefers_async_queries = True
+
+        def ensure_ready_async(self):
+            return None
+
+        def lookup(self, _text, _codes):
+            release.wait(2)
+            return []
+
+    dialog = QuickAddDialog(system_dictionary_index=SlowIndex())
+    dialog._text.setText("测试")
+    dialog._code.setText("ceshi")
+    started = perf_counter()
+    dialog._refresh_dictionary_hint()
+    elapsed = perf_counter() - started
+
+    release.set()
+    assert elapsed < 0.2
+    assert dialog._dictionary_timer.isActive()
+    dialog.dispose()
+    dialog.close()
+
+
+def test_consecutive_auto_deploy_requests_are_debounced(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow
+
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    manager = window._phrase_manager
+    app_context.settings.auto_deploy = True
+    request = MagicMock(return_value=True)
+    manager._deploy_coordinator.request = request
+
+    manager._schedule_deploy()
+    manager._schedule_deploy()
+
+    request.assert_not_called()
+    assert manager._auto_deploy_timer.isActive()
+
+    manager._auto_deploy_timer.stop()
+    manager._start_auto_deploy()
+    request.assert_called_once_with()
+    window.dispose()
+    qapp.processEvents()
+
+
 def test_reentering_settings_tab_does_not_refresh_dictionary_catalog(qapp, app_context) -> None:
     from src.ui.main_window import MainWindow, TAB_LIBRARY, TAB_SETTINGS
 
-    window = MainWindow(app_context)
+    window = MainWindow(app_context, background_tasks_enabled=False)
     window._tabs.setCurrentIndex(TAB_SETTINGS)
+    qapp.processEvents()
     assert window._settings_widget is not None
     refresh = MagicMock()
     window._settings_widget.refresh = refresh
 
     window._tabs.setCurrentIndex(TAB_LIBRARY)
     window._tabs.setCurrentIndex(TAB_SETTINGS)
+    qapp.processEvents()
 
     refresh.assert_not_called()
-    window.close()
+    window.dispose()
+    qapp.processEvents()
+
+
+def test_rapid_tab_switch_only_activates_latest_lazy_page(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow, TAB_DICTIONARIES, TAB_INPUT
+
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    open_dictionary = MagicMock()
+    open_input = MagicMock()
+    window._ensure_dictionary_widget = open_dictionary
+    window._ensure_input_widget = open_input
+
+    window._tabs.setCurrentIndex(TAB_DICTIONARIES)
+    window._tabs.setCurrentIndex(TAB_INPUT)
+    qapp.processEvents()
+
+    open_dictionary.assert_not_called()
+    open_input.assert_called_once_with()
+    window.dispose()
+    qapp.processEvents()
+
+
+def test_main_window_dispose_stops_background_services(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow
+
+    close_data_engine = MagicMock(wraps=app_context.data_engine_client.close)
+    close_preview = MagicMock(wraps=app_context.rime_preview_service.close)
+    unregister_hotkey = MagicMock(wraps=app_context.hotkey_manager.unregister)
+    app_context.data_engine_client.close = close_data_engine
+    app_context.rime_preview_service.close = close_preview
+    app_context.hotkey_manager.unregister = unregister_hotkey
+    window = MainWindow(app_context, background_tasks_enabled=False)
+
+    assert not window._scheduled_backup_timer.isActive()
+    assert not window._environment_monitor._timer.isActive()
+    assert not window._index_status_timer.isActive()
+
+    window.dispose()
+    qapp.processEvents()
+
+    assert window._disposed
+    close_data_engine.assert_called_once_with()
+    close_preview.assert_called_once_with()
+    unregister_hotkey.assert_called_once_with()
+
+
+def test_main_navigation_excludes_frozen_candidate_appearance(qapp, app_context) -> None:
+    from src.ui.main_window import MainWindow
+
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    titles = [
+        window._tabs._sidebar.item(index).text()
+        for index in range(window._tabs._sidebar.count())
+    ]
+
+    assert "候选窗外观" not in titles
+    assert titles == [
+        "词库工作台", "词典中心", "词库维护",
+        "输入习惯", "符号管理", "设置",
+    ]
+    window.dispose()
+    qapp.processEvents()
 
 
 def test_slow_dictionary_catalog_does_not_block_settings_construction(
@@ -142,3 +271,31 @@ def test_settings_are_split_into_stable_task_sections(qapp, app_context) -> None
         for index in range(widget._sections.count())
     ] == ["常规", "词典与文件", "备份与恢复", "诊断与更新"]
     widget.close()
+
+
+def test_gui_test_launch_is_visibly_marked(qapp, app_context, monkeypatch) -> None:
+    from src.ui.main_window import MainWindow
+
+    monkeypatch.setenv("RIME_CONFIG_GUI_TEST", "1")
+    window = MainWindow(app_context, background_tasks_enabled=False)
+
+    assert "GUI测试中" in window.windowTitle()
+    window.dispose()
+
+
+def test_normal_launch_index_refresh_waits_for_system_idle(
+        qapp, app_context, monkeypatch) -> None:
+    from src.ui.main_window import MainWindow
+
+    window = MainWindow(app_context, background_tasks_enabled=False)
+    window._background_tasks_enabled = True
+    ensure = MagicMock()
+    app_context.system_dictionary_index.ensure_ready_async = ensure
+    monkeypatch.setattr("src.ui.main_window.system_idle_seconds", lambda: 0.0)
+
+    window._start_optional_services()
+    window._try_deferred_index_refresh()
+
+    ensure.assert_not_called()
+    assert window._deferred_index_timer.isActive()
+    window.dispose()

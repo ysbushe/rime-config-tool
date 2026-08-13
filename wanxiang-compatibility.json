@@ -1,0 +1,6 @@
+{
+  "format": 1,
+  "verified_through": "17.2.4",
+  "blocked_versions": {},
+  "note": "This data-only rule can be updated independently of the Windows application release. Every package still passes local structure and capability checks before installation."
+}

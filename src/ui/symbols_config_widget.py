@@ -38,12 +38,16 @@ class SymbolsConfigWidget(QWidget):
     def __init__(self, repo: SymbolsRepo, backup: BackupService,
                  settings: Settings | None = None,
                  deploy: DeployService | None = None,
+                 deploy_request=None,
+                 write_guard=None,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._repo = repo
         self._backup = backup
         self._settings = settings
         self._deploy = deploy
+        self._deploy_request = deploy_request
+        self._write_guard = write_guard
         self._current_category = ""
         self._dirty = False
         self._categories_signature: tuple[str, ...] = ()
@@ -199,6 +203,7 @@ class SymbolsConfigWidget(QWidget):
         if ok and name.strip():
             self._repo.add_category(name.strip())
             self.refresh_categories(force=True)
+            self._mark_dirty()
 
     def _on_del_category(self) -> None:
         if not self._current_category:
@@ -211,6 +216,7 @@ class SymbolsConfigWidget(QWidget):
             return
         self._repo.remove_category(self._current_category)
         self.refresh_categories(force=True)
+        self._mark_dirty()
 
     def _on_add_symbol(self) -> None:
         if not self._current_category:
@@ -245,6 +251,8 @@ class SymbolsConfigWidget(QWidget):
         if not self._dirty:
             return
         try:
+            if self._write_guard is not None and not self._write_guard():
+                raise RuntimeError("当前输入方案已变化，请等待页面切换后重试")
             self._backup.backup("symbols_v.yaml")
             self._repo.save()
             self._dirty = False
@@ -260,5 +268,17 @@ class SymbolsConfigWidget(QWidget):
             return "沙盒模式，未触发真实部署。"
         if not self._settings.auto_deploy:
             return "未开启自动部署。"
+        if self._deploy_request is not None:
+            self._deploy_request()
+            return "已提交后台部署。"
         ok, msg = self._deploy.deploy()
         return "已自动部署。" if ok else f"部署提示：{msg}"
+
+    def reattach(self, repo: SymbolsRepo, backup: BackupService) -> None:
+        self._repo = repo
+        self._backup = backup
+        self._current_category = ""
+        self._dirty = False
+        self._btn_save.setEnabled(False)
+        self._categories_signature = ()
+        self.refresh_categories(force=True)

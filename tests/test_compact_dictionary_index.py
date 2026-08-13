@@ -210,3 +210,39 @@ def test_incremental_refresh_reports_changed_file_bytes_and_final_phases(tmp_pat
     assert building[-1]["processed_bytes"] == building[-1]["total_bytes"]
     assert building[-1]["total_bytes"] == changed.stat().st_size
     assert [value["phase"] for value in values[-2:]] == ["optimizing", "switching"]
+
+
+def test_compact_index_browses_and_exactly_filters_entries_without_source(tmp_path):
+    rime = _make_rime(tmp_path)
+    sources = discover_dictionary_sources(rime, [("wanxiang", 1.2)])
+    index = CompactDictionaryIndex(tmp_path / "browse.sqlite", "wanxiang")
+    index.build(sources, PinyinService().split_pinyin_code)
+    for source in sources:
+        source.path.unlink()
+
+    first = index.entries_page(page_size=2)
+    second = index.entries_page(page_size=2, cursor=first.next_cursor)
+    assert [item.text for item in first.entries + second.entries] == [
+        "还", "物体", "什么", "什么",
+    ]
+    assert first.next_cursor is not None
+    assert second.next_cursor is None
+    assert [item.text for item in index.entries_page("wuti").entries] == ["物体"]
+
+
+def test_compact_index_browse_can_filter_one_source_without_source_files(tmp_path):
+    first = tmp_path / "first.dict.yaml"
+    second = tmp_path / "second.dict.yaml"
+    first.write_text("---\nname: first\n...\n甲\tjia\t1\n", encoding="utf-8")
+    second.write_text("---\nname: second\n...\n乙\tyi\t2\n", encoding="utf-8")
+    index = CompactDictionaryIndex(tmp_path / "filtered.sqlite", "wanxiang")
+    index.build([
+        CompactDictionarySource(first, "first"),
+        CompactDictionarySource(second, "second"),
+    ])
+    first.unlink()
+    second.unlink()
+
+    page = index.entries_page(source_paths=[second])
+
+    assert [item.text for item in page.entries] == ["乙"]

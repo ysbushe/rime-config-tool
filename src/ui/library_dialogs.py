@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from src.encoding.code_suggestions import raw_code
 from src.repo.phrase_repo import Phrase
 from src.ui.dialog_workbench import dialog_section
+from src.ui.code_line_edit import CodeItemDelegate
 from src.service.library_tools import (
     DuplicateIndex, HealthIssue, exact_duplicate_groups, export_text,
     parse_import_text,
@@ -21,7 +22,8 @@ from src.ui.phrase_table import PhraseTableView
 class DuplicateEditDialog(QDialog):
     """Temporary duplicate editor. Row deletion is committed only by Save."""
 
-    def __init__(self, title: str, phrases: list[Phrase], parent=None, display_code=None, code_first: bool = False) -> None:
+    def __init__(self, title: str, phrases: list[Phrase], parent=None, display_code=None,
+                 code_first: bool = False, code_alphabet: str = "") -> None:
         super().__init__(parent)
         self.setObjectName("AppDialog")
         self.setWindowTitle(title)
@@ -29,6 +31,7 @@ class DuplicateEditDialog(QDialog):
         self._original = list(phrases)
         self._display_code = display_code or (lambda phrase: phrase.code)
         self._code_first = code_first
+        self._code_alphabet = code_alphabet
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 16)
@@ -42,6 +45,10 @@ class DuplicateEditDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["编码", "文本", "权重", "删除"] if self._code_first else ["文本", "编码", "权重", "删除"])
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.setItemDelegateForColumn(
+            0 if self._code_first else 1,
+            CodeItemDelegate(self._code_alphabet, self.table),
+        )
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -116,7 +123,8 @@ class DuplicateEditDialog(QDialog):
 class DuplicateManagerDialog(QDialog):
     """Whole-library duplicate browser, independent of current search or group."""
 
-    def __init__(self, phrases: list[Phrase], apply_callback, parent=None, display_code=None) -> None:
+    def __init__(self, phrases: list[Phrase], apply_callback, parent=None,
+                 display_code=None, code_alphabet: str = "") -> None:
         super().__init__(parent)
         self.setObjectName("AppDialog")
         self.setWindowTitle("重码字符/文本")
@@ -125,6 +133,7 @@ class DuplicateManagerDialog(QDialog):
         self._index = DuplicateIndex.build(phrases)
         self._apply_callback = apply_callback
         self._display_code = display_code or (lambda phrase: phrase.code)
+        self._code_alphabet = code_alphabet
         self._mode = "text"
 
         layout = QVBoxLayout(self)
@@ -204,7 +213,10 @@ class DuplicateManagerDialog(QDialog):
         groups = self._index.by_text if self._mode == "text" else self._index.by_code
         phrases = list(groups.get(key, ()))
         title = ("编辑重码文本：" if self._mode == "text" else "编辑重码拼音：") + key
-        dialog = DuplicateEditDialog(title, phrases, self, self._display_code, code_first=self._mode == "code")
+        dialog = DuplicateEditDialog(
+            title, phrases, self, self._display_code,
+            code_first=self._mode == "code", code_alphabet=self._code_alphabet,
+        )
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._apply_callback(dialog.original, dialog.entries())
             self._phrases = [p for p in self._phrases if p not in dialog.original] + dialog.entries()
@@ -437,20 +449,3 @@ class LibraryHealthDialog(QDialog):
     def _view_other_row(self, index) -> None:
         if 0 <= index.row() < len(self._other_keys):
             self._view_callback(*self._other_keys[index.row()])
-
-class MaintenanceDialog(QDialog):
-    def __init__(self, title: str, lines: list[str], parent=None) -> None:
-        super().__init__(parent)
-        self.setObjectName("AppDialog")
-        self.setWindowTitle(title)
-        self.resize(680, 420)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(12)
-        text = QPlainTextEdit(self)
-        text.setReadOnly(True)
-        text.setPlainText("\n".join(lines) if lines else "未发现需要处理的项目。")
-        layout.addWidget(text)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)

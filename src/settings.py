@@ -32,11 +32,20 @@ _DEFAULTS: Dict[str, Any] = {
     "backup_interval_days": 7,
     "backup_auto_cleanup": True,
     "last_backup_at": "",
+    "backup_policy_by_scheme": {},
     "backup_dir": "",       # 自定义备份目录；空值使用 Rime/.backup
     "theme": "light",        # 主题（风格 A 浅色）
     "sandbox_mode": False,   # 沙盒预览模式：操作副本，不碰真实 Rime 配置
     "auto_group_done": False,  # 首次启动自动分组是否已执行
     "deployer_path": "",     # 用户手动指定的 WeaselDeployer.exe 路径（优先于自动探测）
+    "wanxiang_auto_check": True,
+    "wanxiang_auto_update": False,
+    "wanxiang_last_check": "",
+    "wanxiang_update_state": "",
+    "wanxiang_remind_after": "",
+    "wanxiang_dismissed_version": "",
+    "antivirus_notice_version": "",
+    "saved_library_filters": {},
 }
 
 # 允许持久化的字段
@@ -208,6 +217,27 @@ class Settings:
     @backup_dir.setter
     def backup_dir(self, value: str) -> None:
         self.set("backup_dir", str(value))
+
+    def scheme_backup_policy(self, schema_id: str) -> dict[str, Any]:
+        policies = self._data.get("backup_policy_by_scheme", {})
+        raw = policies.get(schema_id, {}) if isinstance(policies, dict) else {}
+        return {
+            "backup_count": max(1, int(raw.get("backup_count", self.backup_count))),
+            "last_backup_at": str(raw.get("last_backup_at", "")),
+        }
+
+    def set_scheme_backup_policy(self, schema_id: str, **values: Any) -> None:
+        if not schema_id:
+            return
+        policies = self._data.get("backup_policy_by_scheme", {})
+        policies = dict(policies) if isinstance(policies, dict) else {}
+        current = dict(policies.get(schema_id, {}))
+        if "backup_count" in values:
+            current["backup_count"] = max(1, int(values["backup_count"]))
+        if "last_backup_at" in values:
+            current["last_backup_at"] = str(values["last_backup_at"])
+        policies[schema_id] = current
+        self.set("backup_policy_by_scheme", policies)
 
 
     @property

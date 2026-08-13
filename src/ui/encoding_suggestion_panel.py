@@ -29,9 +29,10 @@ class EncodingSuggestionOption(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         row = QGridLayout(self)
-        row.setContentsMargins(10, 7, 10, 7)
+        row.setContentsMargins(10, 4, 10, 4)
         row.setHorizontalSpacing(12)
         row.setVerticalSpacing(0)
+        row.setRowMinimumHeight(0, 32)
         row.setColumnMinimumWidth(0, 86)
         row.setColumnStretch(1, 1)
         row.setColumnMinimumWidth(2, 62)
@@ -50,13 +51,14 @@ class EncodingSuggestionOption(QFrame):
         status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         add = QPushButton("增加")
         add.setObjectName("SuggestionAdd")
-        add.setFixedWidth(70)
+        add.setFixedSize(70, 32)
         add.setToolTip("将该编码加入本次收藏，可一次保存多个编码")
         add.clicked.connect(lambda: self.addRequested.emit(self._code))
-        row.addWidget(name, 0, 0)
-        row.addWidget(code_label, 0, 1)
-        row.addWidget(status, 0, 2)
-        row.addWidget(add, 0, 3)
+        centered = Qt.AlignmentFlag.AlignVCenter
+        row.addWidget(name, 0, 0, alignment=centered)
+        row.addWidget(code_label, 0, 1, alignment=centered)
+        row.addWidget(status, 0, 2, alignment=centered)
+        row.addWidget(add, 0, 3, alignment=centered)
 
     def set_selected(self, selected: bool) -> None:
         self.setProperty("selected", selected)
@@ -93,7 +95,9 @@ class EncodingSuggestionPanel(QWidget):
         self._weight_edits: dict[str, int] = {}
         self._buttons: list[EncodingSuggestionOption] = []
         self._prepared_suggestions: list[EncodingSuggestion] | None = None
-        self._conflicts_by_code: dict[str, list] = {}
+        self._conflicts_by_code: dict[str, list] = self._index_conflicts(
+            self._repo.all() if self._repo else []
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -127,7 +131,6 @@ class EncodingSuggestionPanel(QWidget):
     def set_text(self, text: str) -> None:
         self._text = (text or "").strip()
         self._prepared_suggestions = None
-        self._conflicts_by_code = self._index_conflicts(self._repo.all() if self._repo else [])
         self._rebuild_suggestions()
 
     def set_loading(self, text: str) -> None:
