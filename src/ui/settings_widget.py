@@ -55,6 +55,7 @@ from src.ui.wanxiang_update_notice import (
     WanxiangUpdateConfirmationDialog,
 )
 from src.ui.wanxiang_deployment_dialog import WanxiangDeploymentDialog
+from src.ui.application_update_dialog import ApplicationUpdateDialog
 from src.ui.restore_preview_dialog import RestorePreviewDialog
 from src.ui.click_activated_spin import ClickActivatedSpinBox
 from src.settings import Settings
@@ -241,10 +242,11 @@ class SettingsWidget(QWidget):
         self._dictionary_poll.setInterval(50)
         self._dictionary_poll.timeout.connect(self._drain_dictionary_results)
         self._backup_versions_signature: tuple[str, str, int] | None = None
-        self._update_results: queue.SimpleQueue[tuple[bool, str, bool]] = queue.SimpleQueue()
+        self._update_results: queue.SimpleQueue[tuple] = queue.SimpleQueue()
         self._update_poll = QTimer(self)
         self._update_poll.setInterval(100)
         self._update_poll.timeout.connect(self._drain_update_results)
+        self._application_update_progress = ApplicationUpdateDialog(self)
         self._wanxiang_test_progress: WanxiangDeploymentDialog | None = None
         self._wanxiang_test_timer = QTimer(self)
         self._wanxiang_test_timer.setSingleShot(True)
@@ -269,6 +271,7 @@ class SettingsWidget(QWidget):
             timer.stop()
         if self._wanxiang_test_progress is not None:
             self._wanxiang_test_progress.finish()
+        self._application_update_progress.finish()
         if self._data_engine_client is not None:
             self._data_engine_client.cancel_pending()
 
@@ -1378,6 +1381,7 @@ class SettingsWidget(QWidget):
         self._lbl_update_status.setProperty("role", "info")
         self._lbl_update_status.setVisible(True)
         self._lbl_update_status.setText("正在检查更新…")
+        self._application_update_progress.start("正在连接 GitHub 并检查最新版本…")
         self._update_poll.start()
         threading.Thread(
             target=self._check_update_worker,
@@ -1654,30 +1658,51 @@ class SettingsWidget(QWidget):
             service = UpdateService()
             release, message = service.check(__version__)
             if release is None:
-                result = (False, message, False)
+                result = ("result", False, message, False)
             else:
-                ok, message = service.download_replace_and_restart(release)
-                result = (ok, message, ok)
+                self._update_results.put((
+                    "phase",
+                    f"发现 {release.version}，正在下载并校验更新包…",
+                ))
+                ok, message = service.download_replace_and_restart(
+                    release, current_version=__version__,
+                )
+                result = ("result", ok, message, ok)
         except Exception as exc:
-            result = (False, f"检查更新失败：{exc}", False)
+            result = ("result", False, f"检查更新失败：{exc}", False)
         self._update_results.put(result)
 
     def _drain_update_results(self) -> None:
-        try:
-            result = self._update_results.get_nowait()
-        except queue.Empty:
+        while True:
+            try:
+                result = self._update_results.get_nowait()
+            except queue.Empty:
+                return
+            if result[0] == "phase":
+                self._application_update_progress.set_phase(result[1])
+                self._lbl_update_status.setText(result[1])
+                continue
+            self._update_poll.stop()
+            self._on_update_finished(*result[1:])
             return
-        self._update_poll.stop()
-        self._on_update_finished(*result)
 
     def _on_update_finished(self, ok: bool, message: str, restart: bool) -> None:
         self._lbl_update_status.setProperty("role", "success" if ok else "warning")
         self._lbl_update_status.setVisible(True)
         self._lbl_update_status.setText(message)
-        self._btn_check_update.setEnabled(True)
         if restart:
             from PySide6.QtWidgets import QApplication
-            QApplication.quit()
+            self._application_update_progress.set_phase(
+                "更新器已接管，正在关闭旧版本并自动重启…"
+            )
+            QTimer.singleShot(700, QApplication.quit)
+            return
+        self._application_update_progress.finish()
+        self._btn_check_update.setEnabled(True)
+        if message.startswith("已是最新版本"):
+            QMessageBox.information(self, "检查更新", message)
+        elif not ok:
+            QMessageBox.warning(self, "更新未完成", message)
 
     def _on_deploy_path_changed(self) -> None:
         value = self._deploy_path.text().strip()

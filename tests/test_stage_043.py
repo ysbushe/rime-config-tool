@@ -44,13 +44,15 @@ def test_update_handoff_waits_for_old_process_and_has_rollback(tmp_path: Path) -
     target = tmp_path / "RimeConfig.exe"
     script = service._handoff_script(
         target, tmp_path / "RimeConfig.update.exe", tmp_path / "RimeConfig.backup.exe",
-        tmp_path / "RimeConfig.update.log", 1234,
+        tmp_path / "RimeConfig.update.log", tmp_path / "update.ready",
+        tmp_path / "RimeConfig-test.complete", 1234, "0.10.0", "v0.10.1",
     )
 
     assert "Get-Process -Id $oldPid" in script
     assert "RimeConfig.backup.exe" in script
     assert "已恢复旧版本" in script
     assert "新版本启动后立即退出" in script
+    assert "--update-marker" in script
 
 
 def test_release_digest_parsing() -> None:

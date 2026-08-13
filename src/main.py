@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
@@ -11,9 +12,34 @@ if _PROJECT_ROOT not in sys.path:
 from src.app_context import AppContext  # noqa: E402
 from src.settings import Settings  # noqa: E402
 from src.ui.main_window import MainWindow  # noqa: E402
+from src.config.paths import user_config_dir  # noqa: E402
 from src.utils.logger import get_logger  # noqa: E402
 
 logger = get_logger(__name__)
+
+
+def _update_completion_request(
+    argv: list[str],
+) -> tuple[str, str, Path] | None:
+    """Read and validate the private restart arguments emitted by the updater."""
+    try:
+        completed_at = argv.index("--update-completed")
+        marker_at = argv.index("--update-marker")
+        from_version = argv[completed_at + 1].strip()
+        to_version = argv[completed_at + 2].strip()
+        marker_name = argv[marker_at + 1].strip()
+    except (ValueError, IndexError, OSError):
+        return None
+    updates = (user_config_dir() / "updates").resolve()
+    if not marker_name or Path(marker_name).name != marker_name:
+        return None
+    marker = (updates / marker_name).resolve()
+    if marker.parent != updates or not marker.name.startswith("RimeConfig-") \
+            or marker.suffix != ".complete":
+        return None
+    if not from_version or not to_version or len(from_version) > 32 or len(to_version) > 32:
+        return None
+    return from_version, to_version, marker
 
 
 def _prewarm_quick_add_dialog(context: AppContext) -> None:
@@ -57,6 +83,7 @@ def main() -> int:
     from src.service.windows_notifications import configure_windows_notification_identity
 
     start_minimized = "--autostart" in sys.argv
+    update_completion = _update_completion_request(sys.argv)
     instance_guard = SingleInstanceGuard()
     if not instance_guard.acquire():
         restored = instance_guard.request_existing_instance()
@@ -79,6 +106,7 @@ def main() -> int:
         context,
         start_minimized=start_minimized,
         background_tasks_enabled=not gui_test,
+        update_completion_pending=update_completion is not None,
     )
     _prewarm_quick_add_dialog(context)
     if start_minimized:
@@ -89,6 +117,28 @@ def main() -> int:
         logger.info("应用由开机自启启动，保持托盘常驻。")
     else:
         window.show()
+
+    if update_completion is not None:
+        from_version, to_version, completion_marker = update_completion
+        completion_poll = QTimer(app)
+        completion_poll.setInterval(250)
+        completion_checks = 0
+
+        def show_update_result_when_confirmed() -> None:
+            nonlocal completion_checks
+            completion_checks += 1
+            if completion_marker.is_file():
+                completion_poll.stop()
+                completion_marker.unlink(missing_ok=True)
+                window.show_update_completed_notice(from_version, to_version)
+                return
+            if completion_checks >= 120:
+                completion_poll.stop()
+                logger.warning("新版本已启动，但更新器未写入完成标记：%s", completion_marker)
+                window.show_update_completion_unconfirmed()
+
+        completion_poll.timeout.connect(show_update_result_when_confirmed)
+        completion_poll.start()
 
     wake_timer = QTimer(app)
 

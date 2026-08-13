@@ -78,11 +78,13 @@ class MainWindow(QMainWindow):
 
     def __init__(self, context: AppContext, parent: Optional[QWidget] = None,
                  start_minimized: bool = False,
-                 background_tasks_enabled: bool = True) -> None:
+                 background_tasks_enabled: bool = True,
+                 update_completion_pending: bool = False) -> None:
         super().__init__(parent)
         self._ctx = context
         self._start_minimized = start_minimized
         self._background_tasks_enabled = bool(background_tasks_enabled)
+        self._update_completion_pending = bool(update_completion_pending)
         self._disposed = False
         self._optional_services_started = False
         self._attached_rime_dir = context.settings.rime_dir
@@ -148,7 +150,8 @@ class MainWindow(QMainWindow):
         # until the user actually opens the window, keeping Windows login light.
         if self._background_tasks_enabled and not self._start_minimized:
             QTimer.singleShot(800, self._start_optional_services)
-        if self._background_tasks_enabled and getattr(sys, "frozen", False) \
+        if self._background_tasks_enabled and not self._update_completion_pending \
+                and getattr(sys, "frozen", False) \
                 and self._ctx.settings.get("antivirus_notice_version", "") != __version__:
             QTimer.singleShot(1400, self._show_first_run_security_notice)
         if not self._background_tasks_enabled:
@@ -164,6 +167,37 @@ class MainWindow(QMainWindow):
             "部分杀毒软件可能因此提示风险；请只使用项目正式发布包。",
         )
         self._ctx.settings.set("antivirus_notice_version", __version__)
+
+    def show_update_completed_notice(self, from_version: str, to_version: str) -> None:
+        if self._disposed:
+            return
+        testing = f" · v{__version__} · GUI测试中" \
+            if os.environ.get("RIME_CONFIG_GUI_TEST") == "1" else ""
+        QMessageBox.information(
+            self,
+            f"升级完成{testing}",
+            f"RIME 配置小工具已从 {from_version} 升级至 {to_version}。\n\n"
+            "新版本已经自动启动，可以继续使用。",
+        )
+        self._show_first_run_security_notice_if_needed()
+
+    def show_update_completion_unconfirmed(self) -> None:
+        if self._disposed:
+            return
+        testing = f" · v{__version__} · GUI测试中" \
+            if os.environ.get("RIME_CONFIG_GUI_TEST") == "1" else ""
+        QMessageBox.warning(
+            self,
+            f"升级状态待确认{testing}",
+            "新版本已经启动，但未收到更新器的完成确认。"
+            "请在设置页核对版本；如版本不符，请查看更新日志。",
+        )
+        self._show_first_run_security_notice_if_needed()
+
+    def _show_first_run_security_notice_if_needed(self) -> None:
+        if getattr(sys, "frozen", False) \
+                and self._ctx.settings.get("antivirus_notice_version", "") != __version__:
+            QTimer.singleShot(250, self._show_first_run_security_notice)
 
     def _maybe_check_wanxiang_background(self) -> None:
         if self._disposed or not self._background_tasks_enabled:

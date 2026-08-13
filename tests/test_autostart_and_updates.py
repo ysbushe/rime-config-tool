@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import subprocess
 import zipfile
 from pathlib import Path
+
+import pytest
 
 from src.service.autostart import Autostart
 from src.service.update_service import (
@@ -151,12 +155,84 @@ def test_directory_package_validation_and_handoff(tmp_path: Path) -> None:
     UpdateService._extract_package(archive, stage)
     package_root = UpdateService._find_package_root(stage)
     script = UpdateService._directory_handoff_script(
-        tmp_path / "RimeConfig", package_root, tmp_path / "RimeConfig.backup", tmp_path / "update.log", 1234,
+        tmp_path / "RimeConfig", package_root, tmp_path / "RimeConfig.backup",
+        tmp_path / "update.log", tmp_path / "update.ready",
+        tmp_path / "update.complete", 1234, "0.10.0", "v0.10.1",
     )
 
     assert package_root.name == "RimeConfig"
     assert "Move-Item -LiteralPath $targetDir -Destination $backupDir" in script
     assert "已恢复旧目录版本" in script
+    assert "--update-completed" in script
+    assert "Set-Content -LiteralPath $complete" in script
+
+
+def test_update_script_is_utf8_bom_and_parses_in_windows_powershell_51(
+    tmp_path: Path,
+) -> None:
+    script_path = tmp_path / "中文目录" / "RimeConfig-directory-update.ps1"
+    script_path.parent.mkdir()
+    content = UpdateService._directory_handoff_script(
+        tmp_path / "安装目录", tmp_path / "暂存目录", tmp_path / "备份目录",
+        tmp_path / "更新日志.log", tmp_path / "接管.ready",
+        tmp_path / "RimeConfig-test.complete", 1234, "0.10.0", "v0.10.1",
+    )
+
+    UpdateService._write_powershell_script(script_path, content)
+
+    assert script_path.read_bytes().startswith(b"\xef\xbb\xbf")
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("Windows PowerShell is unavailable")
+    quoted = str(script_path).replace("'", "''")
+    command = (
+        "$tokens=$null; $errors=$null; "
+        f"[System.Management.Automation.Language.Parser]::ParseFile('{quoted}',"
+        "[ref]$tokens,[ref]$errors)|Out-Null; "
+        "if($errors.Count){$errors|ForEach-Object{$_.Message};exit 1}"
+    )
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True, text=True, timeout=10, check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_handoff_requires_ready_acknowledgement(tmp_path: Path, monkeypatch) -> None:
+    script = tmp_path / "update.ps1"
+    script.write_text("# test", encoding="utf-8")
+    ready = tmp_path / "update.ready"
+    ready.write_text("ready", encoding="ascii")
+    launch_log = tmp_path / "handoff.log"
+
+    class Process:
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(UpdateService, "_powershell_executable", staticmethod(lambda: "powershell.exe"))
+    monkeypatch.setattr("src.service.update_service.subprocess.Popen", lambda *_args, **_kwargs: Process())
+
+    UpdateService._start_handoff(script, ready, launch_log, timeout_seconds=0.1)
+
+    assert not ready.exists()
+
+
+def test_handoff_process_failure_is_reported(tmp_path: Path, monkeypatch) -> None:
+    script = tmp_path / "update.ps1"
+    script.write_text("# test", encoding="utf-8")
+    ready = tmp_path / "update.ready"
+    launch_log = tmp_path / "handoff.log"
+
+    class Process:
+        def poll(self):
+            return 1
+
+    monkeypatch.setattr(UpdateService, "_powershell_executable", staticmethod(lambda: "powershell.exe"))
+    monkeypatch.setattr("src.service.update_service.subprocess.Popen", lambda *_args, **_kwargs: Process())
+
+    with pytest.raises(RuntimeError, match="更新器启动失败"):
+        UpdateService._start_handoff(script, ready, launch_log, timeout_seconds=0.1)
 
 
 def test_update_refuses_mismatched_package_type(monkeypatch, tmp_path: Path) -> None:
