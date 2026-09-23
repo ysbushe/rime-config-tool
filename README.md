@@ -236,3 +236,9 @@ python -m venv .venv
 输入诊断已剥离为独立的 `RimeInputDiagnostics.exe`。主程序启动后不会加载或运行监控；只有在“设置 → 输入诊断（按需运行）”中点击“启动输入诊断”时才会拉起，关闭诊断窗口后监控随即停止。
 
 诊断日志位于 `%LOCALAPPDATA%\RimeConfig\diagnostics\input-events.jsonl`，超过 2 MB 自动轮换。日志只包含进程名、窗口类与矩形、前台进程、鼠标位置和 Ctrl/Alt/Shift/Win 状态；不会读取窗口标题、实际按键、剪贴板或 Rime 组词内容。
+
+## 许可证
+
+除另有说明外，本仓库中由项目作者原创的代码和文档采用 [MIT License](LICENSE) 许可。
+
+第三方依赖、组件和引用资源继续适用其各自的许可证；本项目的 MIT 许可证不替代这些条款。
